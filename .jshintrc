@@ -1,0 +1,14 @@
+{
+    "browser"  : true,
+    "node"     : true,
+    "curly"    : true,
+    "eqeqeq"   : true,
+    "quotmark" : "single",
+    "trailing" : true,
+    "undef"    : true,
+    "predef"   : [
+        "require",
+        "global",
+        "module"
+    ]
+}
