@@ -81,31 +81,13 @@ module.exports = global;
 },{}],4:[function(require,module,exports){
 'use strict';
 
-var MediaSource = require('./window.js').MediaSource,
-    xmlfun = require('./xmlfun.js'),
-    //URL = require('./window.js').URL,
-    loadManifest = require('./manifest/loadManifest.js'),
+var SegmentLoader = require('./segments/SegmentLoader.js'),
+    SourceBufferDataQueue = require('./sourceBuffer/SourceBufferDataQueue.js'),
+    DownloadRateManager = require('./rules/DownloadRateManager.js'),
+    VideoReadyStateRule = require('./rules/downloadRate/VideoReadyStateRule.js'),
+    StreamLoader = require('./StreamLoader.js'),
     getMpd = require('./dash/mpd/getMpd.js'),
-    getSegmentListForRepresentation = require('./dash/segments/getSegmentListForRepresentation.js'),
-    SegmentLoader = require('./segments/SegmentLoader.js'),
-    SourceBufferDataQueue = require('./sourceBuffer/SourceBufferDataQueue.js');
-
-// TODO: Move this elsewhere (Where?)
-function getSourceBufferTypeFromRepresentation(representationXml) {
-    if (!representationXml) { return null; }
-    var codecStr = representationXml.getAttribute('codecs');
-    var typeStr = xmlfun.getInheritableAttribute('mimeType')(representationXml);
-
-    //NOTE: LEADING ZEROS IN CODEC TYPE/SUBTYPE ARE TECHNICALLY NOT SPEC COMPLIANT, BUT GPAC & OTHER
-    // DASH MPD GENERATORS PRODUCE THESE NON-COMPLIANT VALUES. HANDLING HERE FOR NOW.
-    // See: RFC 6381 Sec. 3.4 (https://tools.ietf.org/html/rfc6381#section-3.4)
-    var parsedCodec = codecStr.split('.').map(function(str) {
-        return str.replace(/^0+(?!\.|$)/, '');
-    });
-    var processedCodecStr = parsedCodec.join('.');
-
-    return (typeStr + ';codecs="' + processedCodecStr + '"');
-}
+    streamTypes = ['video', 'audio'];
 
 function loadInitialization(segmentLoader, sourceBufferDataQueue) {
     segmentLoader.one(segmentLoader.eventList.INITIALIZATION_LOADED, function(event) {
@@ -127,9 +109,9 @@ function loadSegments(segmentLoader, sourceBufferDataQueue) {
             if (!loading) {
                 segmentLoader.off(segmentLoader.eventList.SEGMENT_LOADED, segmentLoadedHandler);
                 /*console.log();
-                console.log();
-                console.log();
-                console.log('Final Segment Count: ' + segments.length);*/
+                 console.log();
+                 console.log();
+                 console.log('Final Segment Count: ' + segments.length);*/
             }
         });
         sourceBufferDataQueue.addToQueue(event.data);
@@ -138,14 +120,85 @@ function loadSegments(segmentLoader, sourceBufferDataQueue) {
     segmentLoader.loadNextSegment();
 }
 
+// TODO: Move this elsewhere (Where?)
+function getSourceBufferTypeFromRepresentation(representation) {
+    var codecStr = representation.getCodecs();
+    var typeStr = representation.getMimeType();
+
+    //NOTE: LEADING ZEROS IN CODEC TYPE/SUBTYPE ARE TECHNICALLY NOT SPEC COMPLIANT, BUT GPAC & OTHER
+    // DASH MPD GENERATORS PRODUCE THESE NON-COMPLIANT VALUES. HANDLING HERE FOR NOW.
+    // See: RFC 6381 Sec. 3.4 (https://tools.ietf.org/html/rfc6381#section-3.4)
+    var parsedCodec = codecStr.split('.').map(function(str) {
+        return str.replace(/^0+(?!\.|$)/, '');
+    });
+    var processedCodecStr = parsedCodec.join('.');
+
+    return (typeStr + ';codecs="' + processedCodecStr + '"');
+}
+
+function createSegmentLoaderByType(manifest, streamType) {
+    var adaptationSet = getMpd(manifest).getPeriods()[0].getAdaptationSetByType(streamType);
+    return adaptationSet ? new SegmentLoader(adaptationSet) : null;
+}
+
+function createSourceBufferDataQueueByType(manifest, mediaSource, streamType) {
+    // NOTE: Since codecs of particular representations (stream variants) may vary slightly, need to get specific
+    // representation to get type for source buffer.
+    var representation = getMpd(manifest).getPeriods()[0].getAdaptationSetByType(streamType).getRepresentations()[0],
+        sourceBufferType = getSourceBufferTypeFromRepresentation(representation),
+        sourceBuffer = mediaSource.addSourceBuffer(sourceBufferType);
+
+    return sourceBuffer ? new SourceBufferDataQueue(sourceBuffer) : null;
+}
+
+function createStreamLoaderForType(manifest, mediaSource, streamType) {
+    var segmentLoader,
+        sourceBufferDataQueue;
+
+    segmentLoader = createSegmentLoaderByType(manifest, streamType);
+    if (!segmentLoader) { return null; }
+    sourceBufferDataQueue = createSourceBufferDataQueueByType(manifest, mediaSource, streamType);
+    if (!sourceBufferDataQueue) { return null; }
+    return new StreamLoader(segmentLoader, sourceBufferDataQueue, streamType);
+}
+
+function createStreamLoadersForTypes(manifest, mediaSource, streamTypes) {
+    var streamLoaders = [],
+        currentStreamLoader;
+
+    streamTypes.forEach(function(streamType) {
+        currentStreamLoader = createStreamLoaderForType(manifest, mediaSource, streamType);
+        if (currentStreamLoader) { streamLoaders.push(currentStreamLoader); }
+    });
+
+    return streamLoaders;
+}
+
+function createStreamLoaders(manifest, mediaSource) { return createStreamLoadersForTypes(manifest, mediaSource, streamTypes); }
+
+function PlaylistLoader(manifest, mediaSource, tech) {
+    this.__downloadRateMgr = new DownloadRateManager([new VideoReadyStateRule(tech)]);
+    this.__streamLoaders = createStreamLoaders(manifest, mediaSource);
+    this.__streamLoaders.forEach(function(streamLoader) {
+        loadInitialization(streamLoader.getSegmentLoader(), streamLoader.getSourceBufferDataQueue());
+    });
+}
+
+module.exports = PlaylistLoader;
+},{"./StreamLoader.js":6,"./dash/mpd/getMpd.js":7,"./rules/DownloadRateManager.js":15,"./rules/downloadRate/VideoReadyStateRule.js":18,"./segments/SegmentLoader.js":19,"./sourceBuffer/SourceBufferDataQueue.js":20}],5:[function(require,module,exports){
+'use strict';
+
+var MediaSource = require('./window.js').MediaSource,
+    loadManifest = require('./manifest/loadManifest.js'),
+    PlaylistLoader = require('./PlaylistLoader.js');
+
 function load(manifestXml, tech) {
     console.log('START');
 
     var mediaSource = new MediaSource(),
         openListener = function(event) {
             mediaSource.removeEventListener('sourceopen', openListener, false);
-            kickoffSegmentLoading('video', manifestXml, mediaSource);
-            kickoffSegmentLoading('audio', manifestXml, mediaSource);
+            var playlistLoader = new PlaylistLoader(manifestXml, mediaSource, tech);
         };
 
     mediaSource.addEventListener('sourceopen', openListener, false);
@@ -154,28 +207,7 @@ function load(manifestXml, tech) {
     //mediaSource.addEventListener('webkitsourceclose', closed, false);
     //mediaSource.addEventListener('sourceclose', closed, false);
 
-    //mediaSourceExtensions.videoElementUtils.attachMediaSource(mediaSource, tech);
     tech.setSrc(URL.createObjectURL(mediaSource));
-}
-
-function kickoffSegmentLoading(segmentListType, manifestXml, mediaSource) {
-    var adaptationSet = getMpd(manifestXml).getPeriods()[0].getAdaptationSetByType(segmentListType),
-        segmentLoader = new SegmentLoader(adaptationSet),
-        mimeType = getSourceBufferTypeFromRepresentation(segmentLoader.getCurrentRepresentation().xml),
-        sourceBuffer = mediaSource.addSourceBuffer(mimeType),
-        sourceBufferDataQueue = new SourceBufferDataQueue(sourceBuffer);
-
-    var segmentList = getSegmentListForRepresentation(adaptationSet.getRepresentations()[0]);
-    // NOTE: FOR VERIFICATION PURPOSES ONLY
-    console.log('Type: ' + segmentListType);
-    console.log('Total Duration: ' + segmentList.getTotalDuration());
-    console.log('Segment Duration: ' + segmentList.getSegmentDuration());
-    console.log('Total Segment Count: ' + segmentList.getTotalSegmentCount());
-    console.log('Start Number: ' + segmentList.getStartNumber());
-    console.log('End Number: ' + segmentList.getEndNumber());
-    //console.log('MediaSource duration: ' + mediaSource.setDuration(segmentList.getTotalDuration()));
-
-    loadInitialization(segmentLoader, sourceBufferDataQueue);
 }
 
 function SourceHandler(source, tech) {
@@ -185,7 +217,25 @@ function SourceHandler(source, tech) {
 }
 
 module.exports = SourceHandler;
-},{"./dash/mpd/getMpd.js":5,"./dash/segments/getSegmentListForRepresentation.js":7,"./manifest/loadManifest.js":12,"./segments/SegmentLoader.js":13,"./sourceBuffer/SourceBufferDataQueue.js":14,"./window.js":16,"./xmlfun.js":17}],5:[function(require,module,exports){
+},{"./PlaylistLoader.js":4,"./manifest/loadManifest.js":14,"./window.js":23}],6:[function(require,module,exports){
+'use strict';
+
+function StreamLoader(segmentLoader, sourceBufferDataQueue, streamType) {
+    this.__segmentLoader = segmentLoader;
+    this.__sourceBufferDataQueue = sourceBufferDataQueue;
+    this.__streamType = streamType;
+}
+
+StreamLoader.prototype.getStreamType = function() { return this.__streamType; };
+
+StreamLoader.prototype.getSegmentLoader = function() { return this.__segmentLoader; };
+
+StreamLoader.prototype.getSourceBufferDataQueue = function() { return this.__sourceBufferDataQueue; };
+
+StreamLoader.prototype.getCurrentSegmentNumber = function() { return this.__segmentLoader.getCurrentIndex(); };
+
+module.exports = StreamLoader;
+},{}],7:[function(require,module,exports){
 'use strict';
 
 var xmlfun = require('../../xmlfun.js'),
@@ -391,7 +441,7 @@ getAncestorObjectByName = function(xmlNode, tagName, mapFn) {
 };
 
 module.exports = getMpd;
-},{"../../xmlfun.js":17,"./util.js":6}],6:[function(require,module,exports){
+},{"../../xmlfun.js":24,"./util.js":8}],8:[function(require,module,exports){
 'use strict';
 
 var parseRootUrl,
@@ -440,7 +490,7 @@ var util = {
 };
 
 module.exports = util;
-},{}],7:[function(require,module,exports){
+},{}],9:[function(require,module,exports){
 'use strict';
 
 var xmlfun = require('../../xmlfun.js'),
@@ -565,7 +615,7 @@ function getSegmentListForRepresentation(representation) {
 
 module.exports = getSegmentListForRepresentation;
 
-},{"../../xmlfun.js":17,"../mpd/util.js":6,"./segmentTemplate":8}],8:[function(require,module,exports){
+},{"../../xmlfun.js":24,"../mpd/util.js":8,"./segmentTemplate":10}],10:[function(require,module,exports){
 'use strict';
 
 var segmentTemplate,
@@ -670,7 +720,7 @@ segmentTemplate = {
 };
 
 module.exports = segmentTemplate;
-},{}],9:[function(require,module,exports){
+},{}],11:[function(require,module,exports){
 'use strict';
 
 var eventMgr = require('./eventManager.js'),
@@ -682,7 +732,7 @@ var eventMgr = require('./eventManager.js'),
     };
 
 module.exports = eventDispatcherMixin;
-},{"./eventManager.js":10}],10:[function(require,module,exports){
+},{"./eventManager.js":12}],12:[function(require,module,exports){
 'use strict';
 
 var videojs = require('../window.js').videojs,
@@ -694,7 +744,7 @@ var videojs = require('../window.js').videojs,
     };
 
 module.exports = eventManager;
-},{"../window.js":16}],11:[function(require,module,exports){
+},{"../window.js":23}],13:[function(require,module,exports){
 /**
  * Created by cpillsbury on 12/3/14.
  */
@@ -749,7 +799,7 @@ module.exports = eventManager;
     }, 0);
 
 }.call(this));
-},{"./SourceHandler":4,"./window":16,"mse.js/src/js/mse.js":2}],12:[function(require,module,exports){
+},{"./SourceHandler":5,"./window":23,"mse.js/src/js/mse.js":2}],14:[function(require,module,exports){
 'use strict';
 
 var parseRootUrl = require('../dash/mpd/util.js').parseRootUrl;
@@ -776,7 +826,171 @@ function loadManifest(url, callback) {
 }
 
 module.exports = loadManifest;
-},{"../dash/mpd/util.js":6}],13:[function(require,module,exports){
+},{"../dash/mpd/util.js":8}],15:[function(require,module,exports){
+'use strict';
+
+var extendObject = require('../util/extendObject.js'),
+    EventDispatcherMixin = require('../events/EventDispatcherMixin.js'),
+    isArray = require('../util/isArray.js'),
+    downloadRates = require('./downloadRate/DownloadRates.js'),
+    eventList = require('./downloadRate/DownloadRateEventTypes.js');
+
+function addEventHandlerToRule(self, rule) {
+    rule.on(self.eventList.DOWNLOAD_RATE_CHANGED, function(event) {
+        self.determineDownloadRate();
+    });
+}
+
+function DownloadRateManager(downloadRateRules) {
+    var self = this;
+    if (isArray(downloadRateRules)) { this.__downloadRateRules = downloadRateRules; }
+    else if (!!downloadRateRules) { this.__downloadRateRules = [downloadRateRules]; }
+    else { this.__downloadRateRules = []; }
+    //this.__downloadRateRules = isArray(downloadRateRules) || [];
+    this.__downloadRateRules.forEach(function(rule) {
+        addEventHandlerToRule(self, rule);
+    });
+    this.__lastDownloadRate = this.downloadRates.DONT_DOWNLOAD;
+    this.determineDownloadRate();
+}
+
+DownloadRateManager.prototype.eventList = eventList;
+
+DownloadRateManager.prototype.downloadRates = downloadRates;
+
+DownloadRateManager.prototype.determineDownloadRate = function() {
+    var self = this,
+        currentDownloadRate,
+        finalDownloadRate = downloadRates.DONT_DOWNLOAD;
+
+    // TODO: Make relationship between rules smarter once we implement multiple rules.
+    self.__downloadRateRules.forEach(function(downloadRateRule) {
+        currentDownloadRate = downloadRateRule.getDownloadRate();
+        if (currentDownloadRate > finalDownloadRate) { finalDownloadRate = currentDownloadRate; }
+    });
+
+    if (finalDownloadRate !== self.__lastDownloadRate) {
+        self.__lastDownloadRate = finalDownloadRate;
+        self.trigger({
+            type:self.eventList.DOWNLOAD_RATE_CHANGED,
+            target:self,
+            downloadRate:self.__lastDownloadRate
+        });
+    }
+
+    return finalDownloadRate;
+};
+
+DownloadRateManager.prototype.addDownloadRateRule = function(downloadRateRule) {
+    var self = this;
+    self.__downloadRateRules.push(downloadRateRule);
+    addEventHandlerToRule(self, downloadRateRule);
+};
+
+// Add event dispatcher functionality to prototype.
+extendObject(DownloadRateManager.prototype, EventDispatcherMixin);
+
+module.exports = DownloadRateManager;
+},{"../events/EventDispatcherMixin.js":11,"../util/extendObject.js":21,"../util/isArray.js":22,"./downloadRate/DownloadRateEventTypes.js":16,"./downloadRate/DownloadRates.js":17}],16:[function(require,module,exports){
+var eventList = {
+    DOWNLOAD_RATE_CHANGED: 'downloadRateChanged'
+};
+
+module.exports = eventList;
+},{}],17:[function(require,module,exports){
+'use strict';
+
+var downloadRates = {
+    DONT_DOWNLOAD: 0,
+    PLAYBACK_RATE: 1000,
+    DOWNLOAD_RATE: 10000
+};
+
+module.exports = downloadRates;
+},{}],18:[function(require,module,exports){
+'use strict';
+
+var extendObject = require('../../util/extendObject.js'),
+    EventDispatcherMixin = require('../../events/EventDispatcherMixin.js'),
+    downloadRates = require('./DownloadRates.js'),
+    eventList = require('./DownloadRateEventTypes.js'),
+    downloadAndPlaybackEvents = [
+        'loadstart',
+        'durationchange',
+        'loadedmetadata',
+        'loadeddata',
+        'progress',
+        'canplay',
+        'canplaythrough'
+    ],
+    readyStates = {
+        HAVE_NOTHING: 0,
+        HAVE_METADATA: 1,
+        HAVE_CURRENT_DATA: 2,
+        HAVE_FUTURE_DATA: 3,
+        HAVE_ENOUGH_DATA: 4
+    };
+
+function getReadyState(tech) {
+    return tech.el().readyState;
+}
+
+function VideoReadyStateRule(tech) {
+    var self = this;
+    // TODO: Null/type check
+    this.__tech = tech;
+    this.__downloadRate = this.downloadRates.DONT_DOWNLOAD;
+
+    function determineDownloadRate() {
+        var downloadRate = (getReadyState(self.__tech) === readyStates.HAVE_ENOUGH_DATA) ?
+            self.downloadRates.PLAYBACK_RATE :
+            self.downloadRates.DOWNLOAD_RATE;
+        return downloadRate;
+    }
+
+    function updateDownloadRate() {
+        var newDownloadRate = determineDownloadRate();
+        if (self.__downloadRate !== newDownloadRate) {
+            console.log('DOWNLOAD RATE CHANGED TO: ' + newDownloadRate);
+            self.__downloadRate = newDownloadRate;
+            self.trigger({
+                type:self.eventList.DOWNLOAD_RATE_CHANGED,
+                target:self,
+                downloadRate:self.__downloadRate
+            });
+        }
+    }
+
+    downloadAndPlaybackEvents.forEach(function(eventName) {
+        tech.on(eventName, function() {
+            updateDownloadRate();
+        });
+    });
+
+    updateDownloadRate();
+}
+
+VideoReadyStateRule.prototype.eventList = eventList;
+
+// Value Meanings:
+//
+// DONT_DOWNLOAD -  Should not download segments.
+// PLAYBACK_RATE -  Download the next segment at the rate it takes to complete playback of the previous segment.
+//                  In other words, once the data for the current segment has been downloaded,
+//                  wait until segment.getDuration() seconds of stream playback have elapsed before starting the
+//                  download of the next segment.
+// DOWNLOAD_RATE -  Download the next segment once the previous segment has finished downloading.
+VideoReadyStateRule.prototype.downloadRates = downloadRates;
+
+VideoReadyStateRule.prototype.getDownloadRate = function() {
+    return this.__downloadRate;
+};
+
+// Add event dispatcher functionality to prototype.
+extendObject(VideoReadyStateRule.prototype, EventDispatcherMixin);
+
+module.exports = VideoReadyStateRule;
+},{"../../events/EventDispatcherMixin.js":11,"../../util/extendObject.js":21,"./DownloadRateEventTypes.js":16,"./DownloadRates.js":17}],19:[function(require,module,exports){
 
 var extendObject = require('../util/extendObject.js'),
     EventDispatcherMixin = require('../events/EventDispatcherMixin.js'),
@@ -924,7 +1138,7 @@ SegmentLoader.prototype.loadSegmentAtTime = function(presentationTime) {
 extendObject(SegmentLoader.prototype, EventDispatcherMixin);
 
 module.exports = SegmentLoader;
-},{"../dash/segments/getSegmentListForRepresentation.js":7,"../events/EventDispatcherMixin.js":9,"../util/extendObject.js":15}],14:[function(require,module,exports){
+},{"../dash/segments/getSegmentListForRepresentation.js":9,"../events/EventDispatcherMixin.js":11,"../util/extendObject.js":21}],20:[function(require,module,exports){
 'use strict';
 
 var extendObject = require('../util/extendObject.js'),
@@ -987,7 +1201,7 @@ SourceBufferDataQueue.prototype.clearQueue = function() {
 extendObject(SourceBufferDataQueue.prototype, EventDispatcherMixin);
 
 module.exports = SourceBufferDataQueue;
-},{"../events/EventDispatcherMixin.js":9,"../util/extendObject.js":15}],15:[function(require,module,exports){
+},{"../events/EventDispatcherMixin.js":11,"../util/extendObject.js":21}],21:[function(require,module,exports){
 'use strict';
 
 // Extend a given object with all the properties in passed-in object(s).
@@ -1003,9 +1217,20 @@ var extendObject = function(obj /*, extendObject1, extendObject2, ..., extendObj
 };
 
 module.exports = extendObject;
-},{}],16:[function(require,module,exports){
+},{}],22:[function(require,module,exports){
+'use strict';
+
+var genericObjType = function(){},
+    objectRef = new genericObjType();
+
+function isArray(obj) {
+    return objectRef.toString.call(obj) === '[object Array]';
+}
+
+module.exports = isArray;
+},{}],23:[function(require,module,exports){
 module.exports=require(3)
-},{"/Users/cpillsbury/dev/JavaScript/VideoJSHtml5DashWorkspace/vjs-html5-dash/node_modules/mse.js/src/js/window.js":3}],17:[function(require,module,exports){
+},{"/Users/cpillsbury/dev/JavaScript/VideoJSHtml5DashWorkspace/vjs-html5-dash/node_modules/mse.js/src/js/window.js":3}],24:[function(require,module,exports){
 'use strict';
 
 // NOTE: TAKEN FROM LODASH TO REMOVE DEPENDENCY
@@ -1135,4 +1360,4 @@ xmlfun.preApplyArgsFn = preApplyArgsFn;
 xmlfun.getInheritableElement = getInheritableElement;
 
 module.exports = xmlfun;
-},{}]},{},[11]);
+},{}]},{},[13]);

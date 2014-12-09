@@ -2,13 +2,9 @@
 
 var extendObject = require('../util/extendObject.js'),
     EventDispatcherMixin = require('../events/EventDispatcherMixin.js'),
+    isArray = require('../util/isArray.js'),
     downloadRates = require('./downloadRate/DownloadRates.js'),
     eventList = require('./downloadRate/DownloadRateEventTypes.js');
-
-// TODO: Move (make mini-lib for native type-checking? See: xmlfun.js)
-function isArray( obj ) {
-    return Object.toString.call(obj) === '[object Array]';
-}
 
 function addEventHandlerToRule(self, rule) {
     rule.on(self.eventList.DOWNLOAD_RATE_CHANGED, function(event) {
@@ -17,9 +13,13 @@ function addEventHandlerToRule(self, rule) {
 }
 
 function DownloadRateManager(downloadRateRules) {
-    this.__downloadRateRules = isArray(downloadRateRules) || [];
+    var self = this;
+    if (isArray(downloadRateRules)) { this.__downloadRateRules = downloadRateRules; }
+    else if (!!downloadRateRules) { this.__downloadRateRules = [downloadRateRules]; }
+    else { this.__downloadRateRules = []; }
+    //this.__downloadRateRules = isArray(downloadRateRules) || [];
     this.__downloadRateRules.forEach(function(rule) {
-        addEventHandlerToRule(this, rule);
+        addEventHandlerToRule(self, rule);
     });
     this.__lastDownloadRate = this.downloadRates.DONT_DOWNLOAD;
     this.determineDownloadRate();
