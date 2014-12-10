@@ -36,7 +36,18 @@ function truthy(x) { return (x !== false) && existy(x); }
 
 function preApplyArgsFn(fun /*, args */) {
     var preAppliedArgs = Array.prototype.slice.call(arguments, 1);
-    return function() { return fun.apply(null, preAppliedArgs); };
+    // NOTE: the *this* reference will refer to the closure's context unless
+    // the returned function is itself called via .call() or .apply(). If you
+    // *need* to refer to instance-level properties, do something like the following:
+    //
+    // MyType.prototype.someFn = function(argC) { preApplyArgsFn(someOtherFn, argA, argB, ... argN).call(this); };
+    //
+    // Otherwise, you should be able to just call:
+    //
+    // MyType.prototype.someFn = preApplyArgsFn(someOtherFn, argA, argB, ... argN);
+    //
+    // Where possible, functions and methods should not be reaching out to global scope anyway, so...
+    return function() { return fun.apply(this, preAppliedArgs); };
 }
 
 // Higher-order XML functions

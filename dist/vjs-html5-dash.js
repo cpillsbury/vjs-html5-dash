@@ -192,27 +192,26 @@ var MediaSource = require('./window.js').MediaSource,
     loadManifest = require('./manifest/loadManifest.js'),
     PlaylistLoader = require('./PlaylistLoader.js');
 
-function load(manifestXml, tech) {
-    console.log('START');
-
-    var mediaSource = new MediaSource(),
-        openListener = function(event) {
-            mediaSource.removeEventListener('sourceopen', openListener, false);
-            var playlistLoader = new PlaylistLoader(manifestXml, mediaSource, tech);
-        };
-
-    mediaSource.addEventListener('sourceopen', openListener, false);
-
-    // TODO: Handle close.
-    //mediaSource.addEventListener('webkitsourceclose', closed, false);
-    //mediaSource.addEventListener('sourceclose', closed, false);
-
-    tech.setSrc(URL.createObjectURL(mediaSource));
-}
-
 function SourceHandler(source, tech) {
+    var self = this;
     loadManifest(source.src, function(data) {
-        load(data.manifestXml, tech);
+        //load(data.manifestXml, tech);
+        var manifest = self.__manifest = data.manifestXml;
+        console.log('START');
+
+        var mediaSource = new MediaSource(),
+            openListener = function(event) {
+                mediaSource.removeEventListener('sourceopen', openListener, false);
+                self.__playlistLoader = new PlaylistLoader(manifest, mediaSource, tech);
+            };
+
+        mediaSource.addEventListener('sourceopen', openListener, false);
+
+        // TODO: Handle close.
+        //mediaSource.addEventListener('webkitsourceclose', closed, false);
+        //mediaSource.addEventListener('sourceclose', closed, false);
+
+        tech.setSrc(URL.createObjectURL(mediaSource));
     });
 }
 
@@ -1269,7 +1268,18 @@ function truthy(x) { return (x !== false) && existy(x); }
 
 function preApplyArgsFn(fun /*, args */) {
     var preAppliedArgs = Array.prototype.slice.call(arguments, 1);
-    return function() { return fun.apply(null, preAppliedArgs); };
+    // NOTE: the *this* reference will refer to the closure's context unless
+    // the returned function is itself called via .call() or .apply(). If you
+    // *need* to refer to instance-level properties, do something like the following:
+    //
+    // MyType.prototype.someFn = function(argC) { preApplyArgsFn(someOtherFn, argA, argB, ... argN).call(this); };
+    //
+    // Otherwise, you should be able to just call:
+    //
+    // MyType.prototype.someFn = preApplyArgsFn(someOtherFn, argA, argB, ... argN);
+    //
+    // Where possible, functions and methods should not be reaching out to global scope anyway, so...
+    return function() { return fun.apply(this, preAppliedArgs); };
 }
 
 // Higher-order XML functions
