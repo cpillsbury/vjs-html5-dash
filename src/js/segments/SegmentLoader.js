@@ -1,18 +1,19 @@
 
-var extendObject = require('../util/extendObject.js'),
+var existy = require('../util/existy.js'),
+    isNumber = require('../util/isNumber.js'),
+    extendObject = require('../util/extendObject.js'),
     EventDispatcherMixin = require('../events/EventDispatcherMixin.js'),
-    getSegmentListForRepresentation = require('../dash/segments/getSegmentListForRepresentation.js'),
     loadSegment,
     DEFAULT_RETRY_COUNT = 3,
     DEFAULT_RETRY_INTERVAL = 250;
 
 loadSegment = function(segment, callbackFn, retryCount, retryInterval) {
-    var request = new XMLHttpRequest();
-    request.open('GET', segment.getUrl(), true);
+    var request = new XMLHttpRequest(),
+        url = segment.getUrl();
+    request.open('GET', url, true);
     request.responseType = 'arraybuffer';
 
     request.onload = function() {
-        //console.log('Loaded Segment @ URL: ' + segment.getUrl());
         if (request.status < 200 || request.status > 299) {
             console.log('Failed to load Segment @ URL: ' + segment.getUrl());
             if (retryCount > 0) {
@@ -43,12 +44,13 @@ loadSegment = function(segment, callbackFn, retryCount, retryInterval) {
     request.send();
 };
 
-function SegmentLoader(adaptationSet, /* optional */ currentSegmentNumber) {
-    //this.__eventDispatcherDelegate = new EventDispatcherDelegate(this);
-    this.__adaptationSet = adaptationSet;
-    // Initialize to 0th representation.
-    this.__currentRepresentation = adaptationSet.getRepresentations()[0];
-    this.__currentSegmentNumber = currentSegmentNumber;
+function SegmentLoader(manifest, mediaType) {
+    if (!existy(manifest)) { throw new Error('SegmentLoader must be initialized with a manifest!'); }
+    if (!existy(mediaType)) { throw new Error('SegmentLoader must be initialized with a mediaType!'); }
+    this.__manifest = manifest;
+    this.__mediaType = mediaType;
+    this.__currentBandwidth = this.getCurrentBandwidth();
+    this.__currentFragmentNumber = this.getStartNumber();
 }
 
 SegmentLoader.prototype.eventList = {
@@ -56,38 +58,63 @@ SegmentLoader.prototype.eventList = {
     SEGMENT_LOADED: 'segmentLoaded'
 };
 
-SegmentLoader.prototype.getCurrentRepresentation = function() { return this.__currentRepresentation; };
-
-SegmentLoader.prototype.setCurrentRepresentation = function(representation) { this.__currentRepresentation = representation; };
-
-SegmentLoader.prototype.getCurrentSegment = function() {
-    var segmentList = getSegmentListForRepresentation(this.__currentRepresentation);
-    var segment = segmentList.getSegmentByNumber(this.__currentSegmentNumber);
-    return segment;
+SegmentLoader.prototype.__getMediaSet = function getMediaSet() {
+    var mediaSet = this.__manifest.getMediaSetByType(this.__mediaType);
+    return mediaSet;
 };
 
-SegmentLoader.prototype.setCurrentRepresentationByIndex = function(index) {
-    var representations = this.__adaptationSet.getRepresentations();
-    if (index < 0 || index >= representations.length) {
-        throw new Error('index out of bounds');
+SegmentLoader.prototype.__getDefaultFragmentList = function getDefaultFragmentList() {
+    var fragmentList = this.__getMediaSet().getFragmentLists()[0];
+    return fragmentList;
+};
+
+SegmentLoader.prototype.getCurrentBandwidth = function getCurrentBandwidth() {
+    if (!isNumber(this.__currentBandwidth)) { this.__currentBandwidth = this.__getDefaultFragmentList().getBandwidth(); }
+    return this.__currentBandwidth;
+};
+
+SegmentLoader.prototype.setCurrentBandwidth = function setCurrentBandwidth(bandwidth) {
+    if (!isNumber(bandwidth)) {
+        throw new Error('SegmentLoader::setCurrentBandwidth() expects a numeric value for bandwidth!');
     }
-    this.__currentRepresentation = representations[index];
+    var availableBandwidths = this.getAvailableBandwidths();
+    if (availableBandwidths.indexOf(bandwidth) < 0) {
+        throw new Error('SegmentLoader::setCurrentBandwidth() must be set to one of the following values: ' + availableBandwidths.join(', '));
+    }
+    this.__currentBandwidth = bandwidth;
 };
 
-SegmentLoader.prototype.getCurrentSegmentNumber = function() { return this.__currentSegmentNumber; };
-
-SegmentLoader.prototype.getStartSegmentNumber = function() {
-    return getSegmentListForRepresentation(this.__currentRepresentation).getStartNumber();
+SegmentLoader.prototype.getCurrentFragmentList = function getCurrentFragmentList() {
+    var fragmentList =  this.__getMediaSet().getFragmentListByBandwidth(this.getCurrentBandwidth());
+    return fragmentList;
 };
 
-SegmentLoader.prototype.getEndSegmentNumber = function() {
-    return getSegmentListForRepresentation(this.__currentRepresentation).getEndNumber();
+SegmentLoader.prototype.getAvailableBandwidths = function() {
+    var availableBandwidths = this.__getMediaSet().getAvailableBandwidths();
+    return availableBandwidths;
+};
+
+SegmentLoader.prototype.getStartNumber = function getStartNumber() {
+    var startNumber = this.__getMediaSet().getFragmentListStartNumber();
+    return startNumber;
+};
+
+SegmentLoader.prototype.getCurrentFragment = function() {
+    var fragment = this.getCurrentFragmentList().getSegmentByNumber(this.__currentFragmentNumber);
+    return fragment;
+};
+
+SegmentLoader.prototype.getCurrentFragmentNumber = function() { return this.__currentFragmentNumber; };
+
+SegmentLoader.prototype.getEndNumber = function() {
+    var endNumber = this.__getMediaSet().getFragmentListEndNumber();
+    return endNumber;
 };
 
 SegmentLoader.prototype.loadInitialization = function() {
     var self = this,
-        segmentList = getSegmentListForRepresentation(this.__currentRepresentation),
-        initialization = segmentList.getInitialization();
+        fragmentList = this.getCurrentFragmentList(),
+        initialization = fragmentList.getInitialization();
 
     if (!initialization) { return false; }
 
@@ -108,17 +135,16 @@ SegmentLoader.prototype.loadNextSegment = function() {
 
 // TODO: Duplicate code below. Abstract away.
 SegmentLoader.prototype.loadSegmentAtNumber = function(number) {
-    var self = this,
-        segmentList = getSegmentListForRepresentation(this.__currentRepresentation);
+    var self = this;
 
-    if (number > segmentList.getEndNumber()) { return false; }
+    if (number > this.getEndNumber()) { return false; }
 
-    var segment = segmentList.getSegmentByNumber(number);
+    var fragment = this.getCurrentFragmentList().getSegmentByNumber(number);
 
-    loadSegment.call(this, segment, function(response) {
-        self.__currentSegmentNumber = segment.getNumber();
+    loadSegment.call(this, fragment, function(response) {
+        self.__currentSegmentNumber = fragment.getNumber();
         var initSegment = new Uint8Array(response);
-        self.trigger({ type:self.eventList.SEGMENT_LOADED, target:self, data:initSegment});
+        self.trigger({ type:self.eventList.SEGMENT_LOADED, target:self, data:initSegment });
     }, DEFAULT_RETRY_COUNT, DEFAULT_RETRY_INTERVAL);
 
     return true;
@@ -126,14 +152,14 @@ SegmentLoader.prototype.loadSegmentAtNumber = function(number) {
 
 SegmentLoader.prototype.loadSegmentAtTime = function(presentationTime) {
     var self = this,
-        segmentList = getSegmentListForRepresentation(this.__currentRepresentation);
+        fragmentList = this.getCurrentFragmentList();
 
-    if (presentationTime > segmentList.getTotalDuration()) { return false; }
+    if (presentationTime > fragmentList.getTotalDuration()) { return false; }
 
-    var segment = segmentList.getSegmentByTime(presentationTime);
+    var fragment = this.getCurrentFragmentList().getSegmentByTime(presentationTime);
 
-    loadSegment.call(this, segment, function(response) {
-        self.__currentSegmentNumber = segment.getNumber();
+    loadSegment.call(this, fragment, function(response) {
+        self.__currentSegmentNumber = fragment.getNumber();
         var initSegment = new Uint8Array(response);
         self.trigger({ type:self.eventList.SEGMENT_LOADED, target:self, data:initSegment});
     }, DEFAULT_RETRY_COUNT, DEFAULT_RETRY_INTERVAL);

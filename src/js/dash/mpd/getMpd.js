@@ -57,6 +57,7 @@ var doesntHaveCommonProperties = function(elem) {
     return !hasCommonProperties(elem);
 };
 
+// Common Attrs
 var getWidth = xmlfun.getInheritableAttribute('width'),
     getHeight = xmlfun.getInheritableAttribute('height'),
     getFrameRate = xmlfun.getInheritableAttribute('frameRate'),
@@ -66,7 +67,9 @@ var getWidth = xmlfun.getInheritableAttribute('width'),
 var getSegmentTemplateXml = xmlfun.getInheritableElement('SegmentTemplate', doesntHaveCommonProperties);
 
 // MPD Attr fns
-var getMediaPresentationDuration = xmlfun.getAttrFn('mediaPresentationDuration');
+var getMediaPresentationDuration = xmlfun.getAttrFn('mediaPresentationDuration'),
+    getType = xmlfun.getAttrFn('type'),
+    getMinimumUpdatePeriod = xmlfun.getAttrFn('minimumUpdatePeriod');
 
 // Representation Attr fns
 var getId = xmlfun.getAttrFn('id'),
@@ -86,7 +89,9 @@ createMpdObject = function(xmlNode) {
         xml: xmlNode,
         // Descendants, Ancestors, & Siblings
         getPeriods: xmlfun.preApplyArgsFn(getDescendantObjectsArrayByName, xmlNode, 'Period', createPeriodObject),
-        getMediaPresentationDuration: xmlfun.preApplyArgsFn(getMediaPresentationDuration, xmlNode)
+        getMediaPresentationDuration: xmlfun.preApplyArgsFn(getMediaPresentationDuration, xmlNode),
+        getType: xmlfun.preApplyArgsFn(getType, xmlNode),
+        getMinimumUpdatePeriod: xmlfun.preApplyArgsFn(getMinimumUpdatePeriod, xmlNode)
     };
 };
 
@@ -182,6 +187,7 @@ getMpd = function(manifestXml) {
     return getDescendantObjectsArrayByName(manifestXml, 'MPD', createMpdObject)[0];
 };
 
+// TODO: Move to xmlfun or own module.
 getDescendantObjectsArrayByName = function(parentXml, tagName, mapFn) {
     var descendantsXmlArray = Array.prototype.slice.call(parentXml.getElementsByTagName(tagName));
     /*if (typeof mapFn === 'function') { return descendantsXmlArray.map(mapFn); }*/
@@ -192,6 +198,7 @@ getDescendantObjectsArrayByName = function(parentXml, tagName, mapFn) {
     return descendantsXmlArray;
 };
 
+// TODO: Move to xmlfun or own module.
 getAncestorObjectByName = function(xmlNode, tagName, mapFn) {
     if (!tagName || !xmlNode || !xmlNode.parentNode) { return null; }
     if (!xmlNode.parentNode.hasOwnProperty('nodeName')) { return null; }

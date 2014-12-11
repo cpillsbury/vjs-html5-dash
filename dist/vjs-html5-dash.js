@@ -81,13 +81,14 @@ module.exports = global;
 },{}],4:[function(require,module,exports){
 'use strict';
 
-var SegmentLoader = require('./segments/SegmentLoader.js'),
+var existy = require('./util/existy.js'),
+    SegmentLoader = require('./segments/SegmentLoader.js'),
     SourceBufferDataQueue = require('./sourceBuffer/SourceBufferDataQueue.js'),
     DownloadRateManager = require('./rules/DownloadRateManager.js'),
     VideoReadyStateRule = require('./rules/downloadRate/VideoReadyStateRule.js'),
     StreamLoader = require('./StreamLoader.js'),
     getMpd = require('./dash/mpd/getMpd.js'),
-    streamTypes = ['video', 'audio'];
+    mediaTypes = require('./manifest/MediaTypes.js');
 
 function loadInitialization(segmentLoader, sourceBufferDataQueue) {
     segmentLoader.one(segmentLoader.eventList.INITIALIZATION_LOADED, function(event) {
@@ -100,18 +101,11 @@ function loadInitialization(segmentLoader, sourceBufferDataQueue) {
 }
 
 function loadSegments(segmentLoader, sourceBufferDataQueue) {
-    //var segments = [];
     segmentLoader.on(segmentLoader.eventList.SEGMENT_LOADED, function segmentLoadedHandler(event) {
-        //segments.push(event.data);
-        //console.log('Current Segment Count: ' + segments.length);
         sourceBufferDataQueue.one(sourceBufferDataQueue.eventList.QUEUE_EMPTY, function(event) {
             var loading = segmentLoader.loadNextSegment();
             if (!loading) {
                 segmentLoader.off(segmentLoader.eventList.SEGMENT_LOADED, segmentLoadedHandler);
-                /*console.log();
-                 console.log();
-                 console.log();
-                 console.log('Final Segment Count: ' + segments.length);*/
             }
         });
         sourceBufferDataQueue.addToQueue(event.data);
@@ -120,61 +114,26 @@ function loadSegments(segmentLoader, sourceBufferDataQueue) {
     segmentLoader.loadNextSegment();
 }
 
-// TODO: Move this elsewhere (Where?)
-function getSourceBufferTypeFromRepresentation(representation) {
-    var codecStr = representation.getCodecs();
-    var typeStr = representation.getMimeType();
-
-    //NOTE: LEADING ZEROS IN CODEC TYPE/SUBTYPE ARE TECHNICALLY NOT SPEC COMPLIANT, BUT GPAC & OTHER
-    // DASH MPD GENERATORS PRODUCE THESE NON-COMPLIANT VALUES. HANDLING HERE FOR NOW.
-    // See: RFC 6381 Sec. 3.4 (https://tools.ietf.org/html/rfc6381#section-3.4)
-    var parsedCodec = codecStr.split('.').map(function(str) {
-        return str.replace(/^0+(?!\.|$)/, '');
-    });
-    var processedCodecStr = parsedCodec.join('.');
-
-    return (typeStr + ';codecs="' + processedCodecStr + '"');
-}
-
-function createSegmentLoaderByType(manifest, streamType) {
-    var adaptationSet = getMpd(manifest).getPeriods()[0].getAdaptationSetByType(streamType);
-    return adaptationSet ? new SegmentLoader(adaptationSet) : null;
-}
-
-function createSourceBufferDataQueueByType(manifest, mediaSource, streamType) {
-    // NOTE: Since codecs of particular representations (stream variants) may vary slightly, need to get specific
-    // representation to get type for source buffer.
-    var representation = getMpd(manifest).getPeriods()[0].getAdaptationSetByType(streamType).getRepresentations()[0],
-        sourceBufferType = getSourceBufferTypeFromRepresentation(representation),
+function createSourceBufferDataQueueByType(manifest, mediaSource, mediaType) {
+    var sourceBufferType = manifest.getMediaSetByType(mediaType).getSourceBufferType(),
+        // TODO: Try/catch block?
         sourceBuffer = mediaSource.addSourceBuffer(sourceBufferType);
-
-    return sourceBuffer ? new SourceBufferDataQueue(sourceBuffer) : null;
+    return new SourceBufferDataQueue(sourceBuffer);
 }
 
-function createStreamLoaderForType(manifest, mediaSource, streamType) {
-    var segmentLoader,
-        sourceBufferDataQueue;
-
-    segmentLoader = createSegmentLoaderByType(manifest, streamType);
-    if (!segmentLoader) { return null; }
-    sourceBufferDataQueue = createSourceBufferDataQueueByType(manifest, mediaSource, streamType);
-    if (!sourceBufferDataQueue) { return null; }
-    return new StreamLoader(segmentLoader, sourceBufferDataQueue, streamType);
+function createStreamLoaderForType(manifest, mediaSource, mediaType) {
+    var segmentLoader = new SegmentLoader(manifest, mediaType),
+        sourceBufferDataQueue = createSourceBufferDataQueueByType(manifest, mediaSource, mediaType);
+    return new StreamLoader(segmentLoader, sourceBufferDataQueue, mediaType);
 }
 
-function createStreamLoadersForTypes(manifest, mediaSource, streamTypes) {
-    var streamLoaders = [],
-        currentStreamLoader;
-
-    streamTypes.forEach(function(streamType) {
-        currentStreamLoader = createStreamLoaderForType(manifest, mediaSource, streamType);
-        if (currentStreamLoader) { streamLoaders.push(currentStreamLoader); }
-    });
-
+function createStreamLoaders(manifest, mediaSource) {
+    var matchedTypes = mediaTypes.filter(function(mediaType) {
+            var exists = existy(manifest.getMediaSetByType(mediaType));
+            return existy; }),
+        streamLoaders = matchedTypes.map(function(mediaType) { return createStreamLoaderForType(manifest, mediaSource, mediaType); });
     return streamLoaders;
 }
-
-function createStreamLoaders(manifest, mediaSource) { return createStreamLoadersForTypes(manifest, mediaSource, streamTypes); }
 
 function PlaylistLoader(manifest, mediaSource, tech) {
     this.__downloadRateMgr = new DownloadRateManager([new VideoReadyStateRule(tech)]);
@@ -185,24 +144,22 @@ function PlaylistLoader(manifest, mediaSource, tech) {
 }
 
 module.exports = PlaylistLoader;
-},{"./StreamLoader.js":6,"./dash/mpd/getMpd.js":7,"./rules/DownloadRateManager.js":15,"./rules/downloadRate/VideoReadyStateRule.js":18,"./segments/SegmentLoader.js":19,"./sourceBuffer/SourceBufferDataQueue.js":20}],5:[function(require,module,exports){
+},{"./StreamLoader.js":6,"./dash/mpd/getMpd.js":7,"./manifest/MediaTypes.js":15,"./rules/DownloadRateManager.js":17,"./rules/downloadRate/VideoReadyStateRule.js":20,"./segments/SegmentLoader.js":21,"./sourceBuffer/SourceBufferDataQueue.js":22,"./util/existy.js":23}],5:[function(require,module,exports){
 'use strict';
 
 var MediaSource = require('./window.js').MediaSource,
-    loadManifest = require('./manifest/loadManifest.js'),
+    //loadManifest = require('./manifest/loadManifest.js'),
+    Manifest = require('./manifest/Manifest.js'),
     PlaylistLoader = require('./PlaylistLoader.js');
 
 function SourceHandler(source, tech) {
-    var self = this;
-    loadManifest(source.src, function(data) {
-        //load(data.manifestXml, tech);
-        var manifest = self.__manifest = data.manifestXml;
-        console.log('START');
-
+    var self = this,
+        manifestProvider = new Manifest(source.src, false);
+    manifestProvider.load(function(manifest) {
         var mediaSource = new MediaSource(),
             openListener = function(event) {
                 mediaSource.removeEventListener('sourceopen', openListener, false);
-                self.__playlistLoader = new PlaylistLoader(manifest, mediaSource, tech);
+                self.__playlistLoader = new PlaylistLoader(manifestProvider, mediaSource, tech);
             };
 
         mediaSource.addEventListener('sourceopen', openListener, false);
@@ -216,7 +173,7 @@ function SourceHandler(source, tech) {
 }
 
 module.exports = SourceHandler;
-},{"./PlaylistLoader.js":4,"./manifest/loadManifest.js":14,"./window.js":23}],6:[function(require,module,exports){
+},{"./PlaylistLoader.js":4,"./manifest/Manifest.js":14,"./window.js":30}],6:[function(require,module,exports){
 'use strict';
 
 function StreamLoader(segmentLoader, sourceBufferDataQueue, streamType) {
@@ -294,6 +251,7 @@ var doesntHaveCommonProperties = function(elem) {
     return !hasCommonProperties(elem);
 };
 
+// Common Attrs
 var getWidth = xmlfun.getInheritableAttribute('width'),
     getHeight = xmlfun.getInheritableAttribute('height'),
     getFrameRate = xmlfun.getInheritableAttribute('frameRate'),
@@ -303,7 +261,9 @@ var getWidth = xmlfun.getInheritableAttribute('width'),
 var getSegmentTemplateXml = xmlfun.getInheritableElement('SegmentTemplate', doesntHaveCommonProperties);
 
 // MPD Attr fns
-var getMediaPresentationDuration = xmlfun.getAttrFn('mediaPresentationDuration');
+var getMediaPresentationDuration = xmlfun.getAttrFn('mediaPresentationDuration'),
+    getType = xmlfun.getAttrFn('type'),
+    getMinimumUpdatePeriod = xmlfun.getAttrFn('minimumUpdatePeriod');
 
 // Representation Attr fns
 var getId = xmlfun.getAttrFn('id'),
@@ -323,7 +283,9 @@ createMpdObject = function(xmlNode) {
         xml: xmlNode,
         // Descendants, Ancestors, & Siblings
         getPeriods: xmlfun.preApplyArgsFn(getDescendantObjectsArrayByName, xmlNode, 'Period', createPeriodObject),
-        getMediaPresentationDuration: xmlfun.preApplyArgsFn(getMediaPresentationDuration, xmlNode)
+        getMediaPresentationDuration: xmlfun.preApplyArgsFn(getMediaPresentationDuration, xmlNode),
+        getType: xmlfun.preApplyArgsFn(getType, xmlNode),
+        getMinimumUpdatePeriod: xmlfun.preApplyArgsFn(getMinimumUpdatePeriod, xmlNode)
     };
 };
 
@@ -419,6 +381,7 @@ getMpd = function(manifestXml) {
     return getDescendantObjectsArrayByName(manifestXml, 'MPD', createMpdObject)[0];
 };
 
+// TODO: Move to xmlfun or own module.
 getDescendantObjectsArrayByName = function(parentXml, tagName, mapFn) {
     var descendantsXmlArray = Array.prototype.slice.call(parentXml.getElementsByTagName(tagName));
     /*if (typeof mapFn === 'function') { return descendantsXmlArray.map(mapFn); }*/
@@ -429,6 +392,7 @@ getDescendantObjectsArrayByName = function(parentXml, tagName, mapFn) {
     return descendantsXmlArray;
 };
 
+// TODO: Move to xmlfun or own module.
 getAncestorObjectByName = function(xmlNode, tagName, mapFn) {
     if (!tagName || !xmlNode || !xmlNode.parentNode) { return null; }
     if (!xmlNode.parentNode.hasOwnProperty('nodeName')) { return null; }
@@ -440,7 +404,7 @@ getAncestorObjectByName = function(xmlNode, tagName, mapFn) {
 };
 
 module.exports = getMpd;
-},{"../../xmlfun.js":24,"./util.js":8}],8:[function(require,module,exports){
+},{"../../xmlfun.js":31,"./util.js":8}],8:[function(require,module,exports){
 'use strict';
 
 var parseRootUrl,
@@ -614,7 +578,7 @@ function getSegmentListForRepresentation(representation) {
 
 module.exports = getSegmentListForRepresentation;
 
-},{"../../xmlfun.js":24,"../mpd/util.js":8,"./segmentTemplate":10}],10:[function(require,module,exports){
+},{"../../xmlfun.js":31,"../mpd/util.js":8,"./segmentTemplate":10}],10:[function(require,module,exports){
 'use strict';
 
 var segmentTemplate,
@@ -743,7 +707,7 @@ var videojs = require('../window.js').videojs,
     };
 
 module.exports = eventManager;
-},{"../window.js":23}],13:[function(require,module,exports){
+},{"../window.js":30}],13:[function(require,module,exports){
 /**
  * Created by cpillsbury on 12/3/14.
  */
@@ -798,7 +762,251 @@ module.exports = eventManager;
     }, 0);
 
 }.call(this));
-},{"./SourceHandler":5,"./window":23,"mse.js/src/js/mse.js":2}],14:[function(require,module,exports){
+},{"./SourceHandler":5,"./window":30,"mse.js/src/js/mse.js":2}],14:[function(require,module,exports){
+'use strict';
+
+var existy = require('../util/existy.js'),
+    truthy = require('../util/truthy.js'),
+    isString = require('../util/isString.js'),
+    isFunction = require('../util/isFunction.js'),
+    loadManifest = require('./loadManifest.js'),
+    extendObject = require('../util/extendObject.js'),
+    EventDispatcherMixin = require('../events/EventDispatcherMixin.js'),
+    getSegmentListForRepresentation = require('../dash/segments/getSegmentListForRepresentation.js'),
+    getMpd = require('../dash/mpd/getMpd.js'),
+    getSourceBufferTypeFromRepresentation,
+    getMediaTypeFromMimeType,
+    mediaTypes = require('./MediaTypes.js'),
+    DEFAULT_TYPE = mediaTypes[0];
+
+getMediaTypeFromMimeType = function(mimeType, types) {
+    if (!isString(mimeType)) { return DEFAULT_TYPE; }
+    var matchedType = types.find(function(type) {
+        return (!!mimeType && mimeType.indexOf(type) >= 0);
+    });
+
+    return existy(matchedType) ? matchedType : DEFAULT_TYPE;
+};
+
+// TODO: Move to own module in dash package somewhere
+getSourceBufferTypeFromRepresentation = function(representation) {
+    var codecStr = representation.getCodecs();
+    var typeStr = representation.getMimeType();
+
+    //NOTE: LEADING ZEROS IN CODEC TYPE/SUBTYPE ARE TECHNICALLY NOT SPEC COMPLIANT, BUT GPAC & OTHER
+    // DASH MPD GENERATORS PRODUCE THESE NON-COMPLIANT VALUES. HANDLING HERE FOR NOW.
+    // See: RFC 6381 Sec. 3.4 (https://tools.ietf.org/html/rfc6381#section-3.4)
+    var parsedCodec = codecStr.split('.').map(function(str) {
+        return str.replace(/^0+(?!\.|$)/, '');
+    });
+    var processedCodecStr = parsedCodec.join('.');
+
+    return (typeStr + ';codecs="' + processedCodecStr + '"');
+};
+
+
+function Manifest(sourceUri, autoLoad) {
+    this.__autoLoad = truthy(autoLoad);
+    this.setSourceUri(sourceUri);
+}
+
+Manifest.prototype.eventList = {
+    MANIFEST_LOADED: 'manifestLoaded'
+};
+
+
+Manifest.prototype.getSourceUri = function() {
+    return this.__sourceUri;
+};
+
+Manifest.prototype.setSourceUri = function setSourceUri(sourceUri) {
+    // TODO: 'existy()' check for both?
+    if (sourceUri === this.__sourceUri) { return; }
+
+    // TODO: isString() check? 'existy()' check?
+    if (!sourceUri) {
+        this.__clearSourceUri();
+        return;
+    }
+
+    this.__clearCurrentUpdateInterval();
+    this.__sourceUri = sourceUri;
+    if (this.__autoLoad) {
+        // TODO: Impl any cleanup functionality appropriate before load.
+        this.load();
+    }
+};
+
+Manifest.prototype.__clearSourceUri = function clearSourceUri() {
+    this.__sourceUri = null;
+    this.__clearCurrentUpdateInterval();
+    // TODO: impl any other cleanup functionality
+};
+
+Manifest.prototype.load = function load(/* optional */ callbackFn) {
+    var self = this;
+    loadManifest(self.__sourceUri, function(data) {
+        self.__manifest = data.manifestXml;
+        self.__setupUpdateInterval();
+        self.trigger({ type:self.eventList.MANIFEST_LOADED, target:self, data:self.__manifest});
+        if (isFunction(callbackFn)) { callbackFn(data.manifestXml); }
+    });
+};
+
+Manifest.prototype.__clearCurrentUpdateInterval = function clearCurrentUpdateInterval() {
+    if (!existy(this.__updateInterval)) { return; }
+    clearInterval(this.__updateInterval);
+};
+
+Manifest.prototype.__setupUpdateInterval = function setupUpdateInterval() {
+    if (this.__updateInterval) { self.__clearCurrentUpdateInterval(); }
+    if (!this.getShouldUpdate()) { return; }
+    var self = this,
+        minUpdateRate = 2,
+        updateRate = Math.max(this.getUpdateRate(), minUpdateRate);
+    this.__updateInterval = setInterval(function() {
+        self.load();
+    }, updateRate);
+};
+
+Manifest.prototype.getMediaSetByType = function getMediaSetByType(type) {
+    if (mediaTypes.indexOf(type) < 0) { throw new Error('Invalid type. Value must be one of: ' + mediaTypes.join(', ')); }
+    var adaptationSets = getMpd(this.__manifest).getPeriods()[0].getAdaptationSets(),
+        adaptationSetWithTypeMatch = adaptationSets.find(function(adaptationSet) {
+            return (getMediaTypeFromMimeType(adaptationSet.getMimeType(), mediaTypes) === type);
+        });
+    if (!existy(adaptationSetWithTypeMatch)) { return null; }
+    return new MediaSet(adaptationSetWithTypeMatch);
+};
+
+Manifest.prototype.getMediaSets = function getMediaSets() {
+    var adaptationSets = getMpd(this.__manifest).getPeriods()[0].getAdaptationSets(),
+        mediaSets = adaptationSets.map(function(adaptationSet) { return new MediaSet(adaptationSet); });
+    return mediaSets;
+};
+
+Manifest.prototype.getStreamType = function getStreamType() {
+    var streamType = getMpd(this.__manifest).getType();
+    return streamType;
+};
+
+Manifest.prototype.getUpdateRate = function getUpdateRate() {
+    var minimumUpdatePeriod = getMpd(this.__manifest).getMinimumUpdatePeriod();
+    return Number(minimumUpdatePeriod);
+};
+
+Manifest.prototype.getShouldUpdate = function getShouldUpdate() {
+    var isDynamic = (this.getStreamType() === 'dynamic'),
+        hasValidUpdateRate = (this.getUpdateRate() > 0);
+    return (isDynamic && hasValidUpdateRate);
+};
+
+extendObject(Manifest.prototype, EventDispatcherMixin);
+
+function MediaSet(adaptationSet) {
+    // TODO: Additional checks & Error Throwing
+    this.__adaptationSet = adaptationSet;
+}
+
+MediaSet.prototype.getMediaType = function getMediaType() {
+    var type = getMediaTypeFromMimeType(this.getMimeType(), mediaTypes);
+    return type;
+};
+
+MediaSet.prototype.getMimeType = function getMimeType() {
+    var mimeType = this.__adaptationSet.getMimeType();
+    return mimeType;
+};
+
+MediaSet.prototype.getSourceBufferType = function getSourceBufferType() {
+    // NOTE: Currently assuming the codecs associated with each stream variant/representation
+    // will be similar enough that you won't have to re-create the source-buffer when switching
+    // between them.
+
+    var representation = this.__adaptationSet.getRepresentations()[0],
+        sourceBufferType = getSourceBufferTypeFromRepresentation(representation);
+    return sourceBufferType;
+};
+
+MediaSet.prototype.getTotalDuration = function getTotalDuration() {
+    var representation = this.__adaptationSet.getRepresentations()[0],
+        fragmentList = getSegmentListForRepresentation(representation),
+        totalDuration = fragmentList.getTotalDuration();
+    return totalDuration;
+};
+
+// NOTE: Currently assuming these values will be consistent across all representations. While this is *usually*
+// the case, the spec *does* allow segments to not align across representations.
+// See, for example: @segmentAlignment AdaptationSet attribute, ISO IEC 23009-1 Sec. 5.3.3.2, pp 24-5.
+MediaSet.prototype.getTotalFragmentCount = function getTotalSegmentCount() {
+    var representation = this.__adaptationSet.getRepresentations()[0],
+        fragmentList = getSegmentListForRepresentation(representation),
+        totalFragmentCount = fragmentList.getTotalSegmentCount();
+    return totalFragmentCount;
+};
+
+// NOTE: Currently assuming these values will be consistent across all representations. While this is *usually*
+// the case in actual practice, the spec *does* allow segments to not align across representations.
+// See, for example: @segmentAlignment AdaptationSet attribute, ISO IEC 23009-1 Sec. 5.3.3.2, pp 24-5.
+MediaSet.prototype.getFragmentDuration = function getFragmentDuration() {
+    var representation = this.__adaptationSet.getRepresentations()[0],
+        fragmentList = getSegmentListForRepresentation(representation),
+        fragmentDuration = fragmentList.getSegmentDuration();
+    return fragmentDuration;
+};
+
+// NOTE: Currently assuming these values will be consistent across all representations. While this is *usually*
+// the case in actual practice, the spec *does* allow segments to not align across representations.
+// See, for example: @segmentAlignment AdaptationSet attribute, ISO IEC 23009-1 Sec. 5.3.3.2, pp 24-5.
+MediaSet.prototype.getFragmentListStartNumber = function getFragmentListStartNumber() {
+    var representation = this.__adaptationSet.getRepresentations()[0],
+        fragmentList = getSegmentListForRepresentation(representation),
+        fragmentListStartNumber = fragmentList.getStartNumber();
+    return fragmentListStartNumber;
+};
+
+// NOTE: Currently assuming these values will be consistent across all representations. While this is *usually*
+// the case in actual practice, the spec *does* allow segments to not align across representations.
+// See, for example: @segmentAlignment AdaptationSet attribute, ISO IEC 23009-1 Sec. 5.3.3.2, pp 24-5.
+MediaSet.prototype.getFragmentListEndNumber = function getFragmentListEndNumber() {
+    var representation = this.__adaptationSet.getRepresentations()[0],
+        fragmentList = getSegmentListForRepresentation(representation),
+        fragmentListEndNumber = fragmentList.getEndNumber();
+    return fragmentListEndNumber;
+};
+
+// TODO: Determine whether or not to refactor of segmentList implementation and/or naming conventions
+MediaSet.prototype.getFragmentLists = function getFragmentLists() {
+    var representations = this.__adaptationSet.getRepresentations(),
+        fragmentLists = representations.map(getSegmentListForRepresentation);
+    return fragmentLists;
+};
+
+MediaSet.prototype.getFragmentListByBandwidth = function getFragmentListByBandwidth(bandwidth) {
+    var representations = this.__adaptationSet.getRepresentations(),
+        representationWithBandwidthMatch = representations.find(function(representation) {
+            var representationBandwidth = representation.getBandwidth();
+            return (Number(representationBandwidth) === Number(bandwidth));
+        }),
+        fragmentList = getSegmentListForRepresentation(representationWithBandwidthMatch);
+    return fragmentList;
+};
+
+MediaSet.prototype.getAvailableBandwidths = function getAvailableBandwidths() {
+    return this.__adaptationSet.getRepresentations().map(
+        function(representation) {
+            return representation.getBandwidth();
+    }).filter(
+        function(bandwidth) {
+            return existy(bandwidth);
+        }
+    );
+};
+
+module.exports = Manifest;
+},{"../dash/mpd/getMpd.js":7,"../dash/segments/getSegmentListForRepresentation.js":9,"../events/EventDispatcherMixin.js":11,"../util/existy.js":23,"../util/extendObject.js":24,"../util/isFunction.js":26,"../util/isString.js":28,"../util/truthy.js":29,"./MediaTypes.js":15,"./loadManifest.js":16}],15:[function(require,module,exports){
+module.exports = ['video', 'audio'];
+},{}],16:[function(require,module,exports){
 'use strict';
 
 var parseRootUrl = require('../dash/mpd/util.js').parseRootUrl;
@@ -825,7 +1033,7 @@ function loadManifest(url, callback) {
 }
 
 module.exports = loadManifest;
-},{"../dash/mpd/util.js":8}],15:[function(require,module,exports){
+},{"../dash/mpd/util.js":8}],17:[function(require,module,exports){
 'use strict';
 
 var extendObject = require('../util/extendObject.js'),
@@ -890,13 +1098,13 @@ DownloadRateManager.prototype.addDownloadRateRule = function(downloadRateRule) {
 extendObject(DownloadRateManager.prototype, EventDispatcherMixin);
 
 module.exports = DownloadRateManager;
-},{"../events/EventDispatcherMixin.js":11,"../util/extendObject.js":21,"../util/isArray.js":22,"./downloadRate/DownloadRateEventTypes.js":16,"./downloadRate/DownloadRates.js":17}],16:[function(require,module,exports){
+},{"../events/EventDispatcherMixin.js":11,"../util/extendObject.js":24,"../util/isArray.js":25,"./downloadRate/DownloadRateEventTypes.js":18,"./downloadRate/DownloadRates.js":19}],18:[function(require,module,exports){
 var eventList = {
     DOWNLOAD_RATE_CHANGED: 'downloadRateChanged'
 };
 
 module.exports = eventList;
-},{}],17:[function(require,module,exports){
+},{}],19:[function(require,module,exports){
 'use strict';
 
 var downloadRates = {
@@ -906,7 +1114,7 @@ var downloadRates = {
 };
 
 module.exports = downloadRates;
-},{}],18:[function(require,module,exports){
+},{}],20:[function(require,module,exports){
 'use strict';
 
 var extendObject = require('../../util/extendObject.js'),
@@ -989,22 +1197,23 @@ VideoReadyStateRule.prototype.getDownloadRate = function() {
 extendObject(VideoReadyStateRule.prototype, EventDispatcherMixin);
 
 module.exports = VideoReadyStateRule;
-},{"../../events/EventDispatcherMixin.js":11,"../../util/extendObject.js":21,"./DownloadRateEventTypes.js":16,"./DownloadRates.js":17}],19:[function(require,module,exports){
+},{"../../events/EventDispatcherMixin.js":11,"../../util/extendObject.js":24,"./DownloadRateEventTypes.js":18,"./DownloadRates.js":19}],21:[function(require,module,exports){
 
-var extendObject = require('../util/extendObject.js'),
+var existy = require('../util/existy.js'),
+    isNumber = require('../util/isNumber.js'),
+    extendObject = require('../util/extendObject.js'),
     EventDispatcherMixin = require('../events/EventDispatcherMixin.js'),
-    getSegmentListForRepresentation = require('../dash/segments/getSegmentListForRepresentation.js'),
     loadSegment,
     DEFAULT_RETRY_COUNT = 3,
     DEFAULT_RETRY_INTERVAL = 250;
 
 loadSegment = function(segment, callbackFn, retryCount, retryInterval) {
-    var request = new XMLHttpRequest();
-    request.open('GET', segment.getUrl(), true);
+    var request = new XMLHttpRequest(),
+        url = segment.getUrl();
+    request.open('GET', url, true);
     request.responseType = 'arraybuffer';
 
     request.onload = function() {
-        //console.log('Loaded Segment @ URL: ' + segment.getUrl());
         if (request.status < 200 || request.status > 299) {
             console.log('Failed to load Segment @ URL: ' + segment.getUrl());
             if (retryCount > 0) {
@@ -1035,12 +1244,13 @@ loadSegment = function(segment, callbackFn, retryCount, retryInterval) {
     request.send();
 };
 
-function SegmentLoader(adaptationSet, /* optional */ currentSegmentNumber) {
-    //this.__eventDispatcherDelegate = new EventDispatcherDelegate(this);
-    this.__adaptationSet = adaptationSet;
-    // Initialize to 0th representation.
-    this.__currentRepresentation = adaptationSet.getRepresentations()[0];
-    this.__currentSegmentNumber = currentSegmentNumber;
+function SegmentLoader(manifest, mediaType) {
+    if (!existy(manifest)) { throw new Error('SegmentLoader must be initialized with a manifest!'); }
+    if (!existy(mediaType)) { throw new Error('SegmentLoader must be initialized with a mediaType!'); }
+    this.__manifest = manifest;
+    this.__mediaType = mediaType;
+    this.__currentBandwidth = this.getCurrentBandwidth();
+    this.__currentFragmentNumber = this.getStartNumber();
 }
 
 SegmentLoader.prototype.eventList = {
@@ -1048,38 +1258,63 @@ SegmentLoader.prototype.eventList = {
     SEGMENT_LOADED: 'segmentLoaded'
 };
 
-SegmentLoader.prototype.getCurrentRepresentation = function() { return this.__currentRepresentation; };
-
-SegmentLoader.prototype.setCurrentRepresentation = function(representation) { this.__currentRepresentation = representation; };
-
-SegmentLoader.prototype.getCurrentSegment = function() {
-    var segmentList = getSegmentListForRepresentation(this.__currentRepresentation);
-    var segment = segmentList.getSegmentByNumber(this.__currentSegmentNumber);
-    return segment;
+SegmentLoader.prototype.__getMediaSet = function getMediaSet() {
+    var mediaSet = this.__manifest.getMediaSetByType(this.__mediaType);
+    return mediaSet;
 };
 
-SegmentLoader.prototype.setCurrentRepresentationByIndex = function(index) {
-    var representations = this.__adaptationSet.getRepresentations();
-    if (index < 0 || index >= representations.length) {
-        throw new Error('index out of bounds');
+SegmentLoader.prototype.__getDefaultFragmentList = function getDefaultFragmentList() {
+    var fragmentList = this.__getMediaSet().getFragmentLists()[0];
+    return fragmentList;
+};
+
+SegmentLoader.prototype.getCurrentBandwidth = function getCurrentBandwidth() {
+    if (!isNumber(this.__currentBandwidth)) { this.__currentBandwidth = this.__getDefaultFragmentList().getBandwidth(); }
+    return this.__currentBandwidth;
+};
+
+SegmentLoader.prototype.setCurrentBandwidth = function setCurrentBandwidth(bandwidth) {
+    if (!isNumber(bandwidth)) {
+        throw new Error('SegmentLoader::setCurrentBandwidth() expects a numeric value for bandwidth!');
     }
-    this.__currentRepresentation = representations[index];
+    var availableBandwidths = this.getAvailableBandwidths();
+    if (availableBandwidths.indexOf(bandwidth) < 0) {
+        throw new Error('SegmentLoader::setCurrentBandwidth() must be set to one of the following values: ' + availableBandwidths.join(', '));
+    }
+    this.__currentBandwidth = bandwidth;
 };
 
-SegmentLoader.prototype.getCurrentSegmentNumber = function() { return this.__currentSegmentNumber; };
-
-SegmentLoader.prototype.getStartSegmentNumber = function() {
-    return getSegmentListForRepresentation(this.__currentRepresentation).getStartNumber();
+SegmentLoader.prototype.getCurrentFragmentList = function getCurrentFragmentList() {
+    var fragmentList =  this.__getMediaSet().getFragmentListByBandwidth(this.getCurrentBandwidth());
+    return fragmentList;
 };
 
-SegmentLoader.prototype.getEndSegmentNumber = function() {
-    return getSegmentListForRepresentation(this.__currentRepresentation).getEndNumber();
+SegmentLoader.prototype.getAvailableBandwidths = function() {
+    var availableBandwidths = this.__getMediaSet().getAvailableBandwidths();
+    return availableBandwidths;
+};
+
+SegmentLoader.prototype.getStartNumber = function getStartNumber() {
+    var startNumber = this.__getMediaSet().getFragmentListStartNumber();
+    return startNumber;
+};
+
+SegmentLoader.prototype.getCurrentFragment = function() {
+    var fragment = this.getCurrentFragmentList().getSegmentByNumber(this.__currentFragmentNumber);
+    return fragment;
+};
+
+SegmentLoader.prototype.getCurrentFragmentNumber = function() { return this.__currentFragmentNumber; };
+
+SegmentLoader.prototype.getEndNumber = function() {
+    var endNumber = this.__getMediaSet().getFragmentListEndNumber();
+    return endNumber;
 };
 
 SegmentLoader.prototype.loadInitialization = function() {
     var self = this,
-        segmentList = getSegmentListForRepresentation(this.__currentRepresentation),
-        initialization = segmentList.getInitialization();
+        fragmentList = this.getCurrentFragmentList(),
+        initialization = fragmentList.getInitialization();
 
     if (!initialization) { return false; }
 
@@ -1100,17 +1335,16 @@ SegmentLoader.prototype.loadNextSegment = function() {
 
 // TODO: Duplicate code below. Abstract away.
 SegmentLoader.prototype.loadSegmentAtNumber = function(number) {
-    var self = this,
-        segmentList = getSegmentListForRepresentation(this.__currentRepresentation);
+    var self = this;
 
-    if (number > segmentList.getEndNumber()) { return false; }
+    if (number > this.getEndNumber()) { return false; }
 
-    var segment = segmentList.getSegmentByNumber(number);
+    var fragment = this.getCurrentFragmentList().getSegmentByNumber(number);
 
-    loadSegment.call(this, segment, function(response) {
-        self.__currentSegmentNumber = segment.getNumber();
+    loadSegment.call(this, fragment, function(response) {
+        self.__currentSegmentNumber = fragment.getNumber();
         var initSegment = new Uint8Array(response);
-        self.trigger({ type:self.eventList.SEGMENT_LOADED, target:self, data:initSegment});
+        self.trigger({ type:self.eventList.SEGMENT_LOADED, target:self, data:initSegment });
     }, DEFAULT_RETRY_COUNT, DEFAULT_RETRY_INTERVAL);
 
     return true;
@@ -1118,14 +1352,14 @@ SegmentLoader.prototype.loadSegmentAtNumber = function(number) {
 
 SegmentLoader.prototype.loadSegmentAtTime = function(presentationTime) {
     var self = this,
-        segmentList = getSegmentListForRepresentation(this.__currentRepresentation);
+        fragmentList = this.getCurrentFragmentList();
 
-    if (presentationTime > segmentList.getTotalDuration()) { return false; }
+    if (presentationTime > fragmentList.getTotalDuration()) { return false; }
 
-    var segment = segmentList.getSegmentByTime(presentationTime);
+    var fragment = this.getCurrentFragmentList().getSegmentByTime(presentationTime);
 
-    loadSegment.call(this, segment, function(response) {
-        self.__currentSegmentNumber = segment.getNumber();
+    loadSegment.call(this, fragment, function(response) {
+        self.__currentSegmentNumber = fragment.getNumber();
         var initSegment = new Uint8Array(response);
         self.trigger({ type:self.eventList.SEGMENT_LOADED, target:self, data:initSegment});
     }, DEFAULT_RETRY_COUNT, DEFAULT_RETRY_INTERVAL);
@@ -1137,7 +1371,7 @@ SegmentLoader.prototype.loadSegmentAtTime = function(presentationTime) {
 extendObject(SegmentLoader.prototype, EventDispatcherMixin);
 
 module.exports = SegmentLoader;
-},{"../dash/segments/getSegmentListForRepresentation.js":9,"../events/EventDispatcherMixin.js":11,"../util/extendObject.js":21}],20:[function(require,module,exports){
+},{"../events/EventDispatcherMixin.js":11,"../util/existy.js":23,"../util/extendObject.js":24,"../util/isNumber.js":27}],22:[function(require,module,exports){
 'use strict';
 
 var extendObject = require('../util/extendObject.js'),
@@ -1200,7 +1434,13 @@ SourceBufferDataQueue.prototype.clearQueue = function() {
 extendObject(SourceBufferDataQueue.prototype, EventDispatcherMixin);
 
 module.exports = SourceBufferDataQueue;
-},{"../events/EventDispatcherMixin.js":11,"../util/extendObject.js":21}],21:[function(require,module,exports){
+},{"../events/EventDispatcherMixin.js":11,"../util/extendObject.js":24}],23:[function(require,module,exports){
+'use strict';
+
+function existy(x) { return (x !== null) && (x !== undefined); }
+
+module.exports = existy;
+},{}],24:[function(require,module,exports){
 'use strict';
 
 // Extend a given object with all the properties in passed-in object(s).
@@ -1216,7 +1456,7 @@ var extendObject = function(obj /*, extendObject1, extendObject2, ..., extendObj
 };
 
 module.exports = extendObject;
-},{}],22:[function(require,module,exports){
+},{}],25:[function(require,module,exports){
 'use strict';
 
 var genericObjType = function(){},
@@ -1227,9 +1467,62 @@ function isArray(obj) {
 }
 
 module.exports = isArray;
-},{}],23:[function(require,module,exports){
+},{}],26:[function(require,module,exports){
+'use strict';
+
+var genericObjType = function(){},
+    objectRef = new genericObjType();
+
+var isFunction = function isFunction(value) {
+    return typeof value === 'function';
+};
+// fallback for older versions of Chrome and Safari
+if (isFunction(/x/)) {
+    isFunction = function(value) {
+        return typeof value === 'function' && objectRef.toString.call(value) === '[object Function]';
+    };
+}
+
+module.exports = isFunction;
+},{}],27:[function(require,module,exports){
+'use strict';
+
+var genericObjType = function(){},
+    objectRef = new genericObjType();
+
+function isNumber(value) {
+    return typeof value === 'number' ||
+        value && typeof value === 'object' && objectRef.toString.call(value) === '[object Number]' || false;
+}
+
+module.exports = isNumber;
+},{}],28:[function(require,module,exports){
+'use strict';
+
+var genericObjType = function(){},
+    objectRef = new genericObjType();
+
+var isString = function isString(value) {
+    return typeof value === 'string' ||
+        value && typeof value === 'object' && objectRef.toString.call(value) === '[object String]' || false;
+};
+
+module.exports = isString;
+},{}],29:[function(require,module,exports){
+'use strict';
+
+var existy = require('./existy.js');
+
+// NOTE: This version of truthy allows more values to count
+// as "true" than standard JS Boolean operator comparisons.
+// Specifically, truthy() will return true for the values
+// 0, "", and NaN, whereas JS would treat these as "falsy" values.
+function truthy(x) { return (x !== false) && existy(x); }
+
+module.exports = truthy;
+},{"./existy.js":23}],30:[function(require,module,exports){
 module.exports=require(3)
-},{"/Users/cpillsbury/dev/JavaScript/VideoJSHtml5DashWorkspace/vjs-html5-dash/node_modules/mse.js/src/js/window.js":3}],24:[function(require,module,exports){
+},{"/Users/cpillsbury/dev/JavaScript/VideoJSHtml5DashWorkspace/vjs-html5-dash/node_modules/mse.js/src/js/window.js":3}],31:[function(require,module,exports){
 'use strict';
 
 // NOTE: TAKEN FROM LODASH TO REMOVE DEPENDENCY
