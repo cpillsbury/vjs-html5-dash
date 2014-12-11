@@ -13,7 +13,7 @@
     },
     "dependencies": {
         "mse.js": "git://github.com/cpillsbury/mse.js.git",
-        "video.js": "git://github.com/heff/video.js.git#source-handler"
+        "video.js": ">4.11.0"
     },
     "devDependencies": {
         "browserify": "latest",
