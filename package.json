@@ -1,30 +1,31 @@
 {
-    "name": "vjs-html5-dash",
-    "version": "0.1.0",
-    "description": "video.js HTML5 source handler for the MPEG-DASH specification",
-    "keywords": [
-        "require",
-        "global",
-        "module"
-    ],
-    "repository": {
-        "type": "git",
-        "url": "https://github.com/cpillsbury/vjs-html5-dash.git"
-    },
-    "dependencies": {
-        "mse.js": "git://github.com/cpillsbury/mse.js.git",
-        "video.js": ">4.11.0"
-    },
-    "devDependencies": {
-        "browserify": "latest",
-        "grunt": "~0.4.0",
-        "grunt-browserify": "latest",
-        "grunt-contrib-clean": "latest",
-        "grunt-contrib-jshint": "latest",
-        "grunt-contrib-uglify": "latest",
-        "grunt-contrib-watch": "latest"
-    },
-    "main": "./dist/vjs-html5-dash.js",
-    "author": "Christian Pillsbury",
-    "license": "ISC"
+  "name": "vjs-html5-dash",
+  "version": "0.1.0",
+  "description": "video.js HTML5 source handler for the MPEG-DASH specification",
+  "keywords": [
+    "require",
+    "global",
+    "module"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/cpillsbury/vjs-html5-dash.git"
+  },
+  "dependencies": {
+    "global": "^4.3.0",
+    "mse.js": "git://github.com/cpillsbury/mse.js.git",
+    "video.js": ">4.11.0"
+  },
+  "devDependencies": {
+    "browserify": "latest",
+    "grunt": "~0.4.0",
+    "grunt-browserify": "latest",
+    "grunt-contrib-clean": "latest",
+    "grunt-contrib-jshint": "latest",
+    "grunt-contrib-uglify": "latest",
+    "grunt-contrib-watch": "latest"
+  },
+  "main": "./dist/vjs-html5-dash.js",
+  "author": "Christian Pillsbury",
+  "license": "ISC"
 }

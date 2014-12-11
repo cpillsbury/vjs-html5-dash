@@ -4,7 +4,7 @@
 ;(function() {
     'use strict';
 
-    var root = require('./window'),
+    var root = require('global/window'),
         videojs = root.videojs,
         // Note: To use the CommonJS module loader, have to point to the pre-browserified main lib file.
         mse = require('mse.js/src/js/mse.js'),
