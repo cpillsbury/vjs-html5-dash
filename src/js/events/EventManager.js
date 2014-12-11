@@ -1,6 +1,6 @@
 'use strict';
 
-var videojs = require('../window.js').videojs,
+var videojs = require('global/window').videojs,
     eventManager = {
         trigger: videojs.trigger,
         one: videojs.one,

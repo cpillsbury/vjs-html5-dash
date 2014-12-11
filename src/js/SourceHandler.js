@@ -1,6 +1,6 @@
 'use strict';
 
-var MediaSource = require('./window.js').MediaSource,
+var MediaSource = require('global/window').MediaSource,
     //loadManifest = require('./manifest/loadManifest.js'),
     Manifest = require('./manifest/Manifest.js'),
     PlaylistLoader = require('./PlaylistLoader.js');
