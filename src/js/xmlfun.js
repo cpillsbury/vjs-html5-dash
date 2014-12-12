@@ -1,5 +1,7 @@
 'use strict';
 
+// TODO: Refactor to separate js files & modules & remove from here.
+
 // NOTE: TAKEN FROM LODASH TO REMOVE DEPENDENCY
 /** `Object#toString` result shortcuts */
 var funcClass = '[object Function]',

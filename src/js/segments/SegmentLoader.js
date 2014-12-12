@@ -8,6 +8,9 @@ var existy = require('../util/existy.js'),
     DEFAULT_RETRY_INTERVAL = 250;
 
 loadSegment = function(segment, callbackFn, retryCount, retryInterval) {
+    this.__lastDownloadStartTime = Number((new Date().getTime())/1000);
+    this.__lastDownloadCompleteTime = null;
+
     var request = new XMLHttpRequest(),
         url = segment.getUrl();
     request.open('GET', url, true);
@@ -18,13 +21,15 @@ loadSegment = function(segment, callbackFn, retryCount, retryInterval) {
             console.log('Failed to load Segment @ URL: ' + segment.getUrl());
             if (retryCount > 0) {
                 setTimeout(function() {
-                    loadSegment(segment, callbackFn, retryCount - 1, retryInterval);
+                    loadSegment.call(this, segment, callbackFn, retryCount - 1, retryInterval);
                 }, retryInterval);
             } else {
                 console.log('FAILED TO LOAD SEGMENT EVEN AFTER RETRIES');
             }
             return;
         }
+
+        this.__lastDownloadCompleteTime = Number((new Date().getTime())/1000);
 
         if (typeof callbackFn === 'function') { callbackFn(request.response); }
     };
@@ -44,13 +49,12 @@ loadSegment = function(segment, callbackFn, retryCount, retryInterval) {
     request.send();
 };
 
-function SegmentLoader(manifest, mediaType) {
-    if (!existy(manifest)) { throw new Error('SegmentLoader must be initialized with a manifest!'); }
+function SegmentLoader(manifestController, mediaType) {
+    if (!existy(manifestController)) { throw new Error('SegmentLoader must be initialized with a manifestController!'); }
     if (!existy(mediaType)) { throw new Error('SegmentLoader must be initialized with a mediaType!'); }
-    this.__manifest = manifest;
+    this.__manifestController = manifestController;
     this.__mediaType = mediaType;
     this.__currentBandwidth = this.getCurrentBandwidth();
-    this.__currentFragmentNumber = this.getStartNumber();
 }
 
 SegmentLoader.prototype.eventList = {
@@ -59,17 +63,17 @@ SegmentLoader.prototype.eventList = {
 };
 
 SegmentLoader.prototype.__getMediaSet = function getMediaSet() {
-    var mediaSet = this.__manifest.getMediaSetByType(this.__mediaType);
+    var mediaSet = this.__manifestController.getMediaSetByType(this.__mediaType);
     return mediaSet;
 };
 
-SegmentLoader.prototype.__getDefaultFragmentList = function getDefaultFragmentList() {
-    var fragmentList = this.__getMediaSet().getFragmentLists()[0];
-    return fragmentList;
+SegmentLoader.prototype.__getDefaultSegmentList = function getDefaultSegmentList() {
+    var segmentList = this.__getMediaSet().getSegmentLists()[0];
+    return segmentList;
 };
 
 SegmentLoader.prototype.getCurrentBandwidth = function getCurrentBandwidth() {
-    if (!isNumber(this.__currentBandwidth)) { this.__currentBandwidth = this.__getDefaultFragmentList().getBandwidth(); }
+    if (!isNumber(this.__currentBandwidth)) { this.__currentBandwidth = this.__getDefaultSegmentList().getBandwidth(); }
     return this.__currentBandwidth;
 };
 
@@ -84,9 +88,9 @@ SegmentLoader.prototype.setCurrentBandwidth = function setCurrentBandwidth(bandw
     this.__currentBandwidth = bandwidth;
 };
 
-SegmentLoader.prototype.getCurrentFragmentList = function getCurrentFragmentList() {
-    var fragmentList =  this.__getMediaSet().getFragmentListByBandwidth(this.getCurrentBandwidth());
-    return fragmentList;
+SegmentLoader.prototype.getCurrentSegmentList = function getCurrentSegmentList() {
+    var segmentList =  this.__getMediaSet().getSegmentListByBandwidth(this.getCurrentBandwidth());
+    return segmentList;
 };
 
 SegmentLoader.prototype.getAvailableBandwidths = function() {
@@ -95,26 +99,38 @@ SegmentLoader.prototype.getAvailableBandwidths = function() {
 };
 
 SegmentLoader.prototype.getStartNumber = function getStartNumber() {
-    var startNumber = this.__getMediaSet().getFragmentListStartNumber();
+    var startNumber = this.__getMediaSet().getSegmentListStartNumber();
     return startNumber;
 };
 
-SegmentLoader.prototype.getCurrentFragment = function() {
-    var fragment = this.getCurrentFragmentList().getSegmentByNumber(this.__currentFragmentNumber);
-    return fragment;
+SegmentLoader.prototype.getCurrentSegment = function getCurrentSegment() {
+    var segment = this.getCurrentSegmentList().getSegmentByNumber(this.__currentSegmentNumber);
+    return segment;
 };
 
-SegmentLoader.prototype.getCurrentFragmentNumber = function() { return this.__currentFragmentNumber; };
+SegmentLoader.prototype.getCurrentSegmentNumber = function getCurrentSegmentNumber() { return this.__currentSegmentNumber; };
 
 SegmentLoader.prototype.getEndNumber = function() {
-    var endNumber = this.__getMediaSet().getFragmentListEndNumber();
+    var endNumber = this.__getMediaSet().getSegmentListEndNumber();
     return endNumber;
+};
+
+SegmentLoader.prototype.getLastDownloadStartTime = function() {
+    return existy(this.__lastDownloadStartTime) ? this.__lastDownloadStartTime : -1;
+};
+
+SegmentLoader.prototype.getLastDownloadCompleteTime = function() {
+    return existy(this.__lastDownloadCompleteTime) ? this.__lastDownloadCompleteTime : -1;
+};
+
+SegmentLoader.prototype.getLastDownloadRoundTripTimeSpan = function() {
+    return this.getLastDownloadCompleteTime() - this.getLastDownloadStartTime();
 };
 
 SegmentLoader.prototype.loadInitialization = function() {
     var self = this,
-        fragmentList = this.getCurrentFragmentList(),
-        initialization = fragmentList.getInitialization();
+        segmentList = this.getCurrentSegmentList(),
+        initialization = segmentList.getInitialization();
 
     if (!initialization) { return false; }
 
@@ -126,10 +142,9 @@ SegmentLoader.prototype.loadInitialization = function() {
     return true;
 };
 
-// TODO: Determine how to parameterize by representation variants (bandwidth/bitrate? representation object? index?)
 SegmentLoader.prototype.loadNextSegment = function() {
     var noCurrentSegmentNumber = ((this.__currentSegmentNumber === null) || (this.__currentSegmentNumber === undefined)),
-        number = noCurrentSegmentNumber ? 0 : this.__currentSegmentNumber + 1;
+        number = noCurrentSegmentNumber ? this.getStartNumber() : this.__currentSegmentNumber + 1;
     return this.loadSegmentAtNumber(number);
 };
 
@@ -139,10 +154,10 @@ SegmentLoader.prototype.loadSegmentAtNumber = function(number) {
 
     if (number > this.getEndNumber()) { return false; }
 
-    var fragment = this.getCurrentFragmentList().getSegmentByNumber(number);
+    var segment = this.getCurrentSegmentList().getSegmentByNumber(number);
 
-    loadSegment.call(this, fragment, function(response) {
-        self.__currentSegmentNumber = fragment.getNumber();
+    loadSegment.call(this, segment, function(response) {
+        self.__currentSegmentNumber = segment.getNumber();
         var initSegment = new Uint8Array(response);
         self.trigger({ type:self.eventList.SEGMENT_LOADED, target:self, data:initSegment });
     }, DEFAULT_RETRY_COUNT, DEFAULT_RETRY_INTERVAL);
@@ -152,16 +167,16 @@ SegmentLoader.prototype.loadSegmentAtNumber = function(number) {
 
 SegmentLoader.prototype.loadSegmentAtTime = function(presentationTime) {
     var self = this,
-        fragmentList = this.getCurrentFragmentList();
+        segmentList = this.getCurrentSegmentList();
 
-    if (presentationTime > fragmentList.getTotalDuration()) { return false; }
+    if (presentationTime > segmentList.getTotalDuration()) { return false; }
 
-    var fragment = this.getCurrentFragmentList().getSegmentByTime(presentationTime);
+    var segment = segmentList.getSegmentByTime(presentationTime);
 
-    loadSegment.call(this, fragment, function(response) {
-        self.__currentSegmentNumber = fragment.getNumber();
+    loadSegment.call(this, segment, function(response) {
+        self.__currentSegmentNumber = segment.getNumber();
         var initSegment = new Uint8Array(response);
-        self.trigger({ type:self.eventList.SEGMENT_LOADED, target:self, data:initSegment});
+        self.trigger({ type:self.eventList.SEGMENT_LOADED, target:self, data:initSegment });
     }, DEFAULT_RETRY_COUNT, DEFAULT_RETRY_INTERVAL);
 
     return true;

@@ -1,18 +1,18 @@
 'use strict';
 
 var MediaSource = require('global/window').MediaSource,
-    //loadManifest = require('./manifest/loadManifest.js'),
-    Manifest = require('./manifest/Manifest.js'),
+    ManifestController = require('./manifest/ManifestController.js'),
     PlaylistLoader = require('./PlaylistLoader.js');
 
 function SourceHandler(source, tech) {
     var self = this,
-        manifestProvider = new Manifest(source.src, false);
-    manifestProvider.load(function(manifest) {
+        manifestController = new ManifestController(source.src, false);
+
+    manifestController.load(function(manifest) {
         var mediaSource = new MediaSource(),
             openListener = function(event) {
                 mediaSource.removeEventListener('sourceopen', openListener, false);
-                self.__playlistLoader = new PlaylistLoader(manifestProvider, mediaSource, tech);
+                self.__playlistLoader = new PlaylistLoader(manifestController, mediaSource, tech);
             };
 
         mediaSource.addEventListener('sourceopen', openListener, false);
