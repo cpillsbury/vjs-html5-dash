@@ -1287,12 +1287,12 @@ function SourceBufferDataQueue(sourceBuffer) {
 
         self.trigger({ type:self.eventList.SEGMENT_ADDED_TO_BUFFER, target:self });
 
-        if (dataQueue.length <= 0) {
+        if (self.__dataQueue.length <= 0) {
             self.trigger({ type:self.eventList.QUEUE_EMPTY, target:self });
             return;
         }
 
-        event.target.appendBuffer(dataQueue.shift());
+        self.__sourceBuffer.appendBuffer(self.__dataQueue.shift());
     });
 
     this.__dataQueue = dataQueue;
@@ -1306,12 +1306,15 @@ SourceBufferDataQueue.prototype.eventList = {
 };
 
 SourceBufferDataQueue.prototype.addToQueue = function(data) {
+    var dataToAddImmediately;
     if (!existy(data) || (isArray(data) && data.length <= 0)) { return; }
+    // Treat all data as arrays to make subsequent functionality generic.
     if (!isArray(data)) { data = [data]; }
-    // If nothing is in the queue, go ahead and immediately append the segment data to the source buffer.
-    if ((this.__dataQueue.length === 0) && (!this.__sourceBuffer.updating)) { this.__sourceBuffer.appendBuffer(data.shift()); }
-    // Otherwise, push onto queue and wait for the next update event before appending segment data to source buffer.
-    else { this.__dataQueue = this.__dataQueue.concat(data); }
+    // If nothing is in the queue, go ahead and immediately append the first data to the source buffer.
+    if ((this.__dataQueue.length === 0) && (!this.__sourceBuffer.updating)) { dataToAddImmediately = data.shift(); }
+    // If any other data (still) exists, push the rest onto the dataQueue.
+    this.__dataQueue = this.__dataQueue.concat(data);
+    if (existy(dataToAddImmediately)) { this.__sourceBuffer.appendBuffer(dataToAddImmediately); }
 };
 
 SourceBufferDataQueue.prototype.clearQueue = function() {
