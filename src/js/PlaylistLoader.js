@@ -7,8 +7,8 @@ var existy = require('./util/existy.js'),
     mediaTypes = require('./manifest/MediaTypes.js');
 
 // TODO: Migrate methods below to a factory.
-function createSourceBufferDataQueueByType(manifest, mediaSource, mediaType) {
-    var sourceBufferType = manifest.getMediaSetByType(mediaType).getSourceBufferType(),
+function createSourceBufferDataQueueByType(manifestController, mediaSource, mediaType) {
+    var sourceBufferType = manifestController.getMediaSetByType(mediaType).getSourceBufferType(),
         // TODO: Try/catch block?
         sourceBuffer = mediaSource.addSourceBuffer(sourceBufferType);
     return new SourceBufferDataQueue(sourceBuffer);

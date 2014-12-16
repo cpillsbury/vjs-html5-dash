@@ -111,6 +111,7 @@ createSegmentFromTemplateByTime = function(representation, seconds) {
     var segmentDuration = getSegmentDurationFromTemplate(representation),
         number = Math.floor(seconds / segmentDuration),
         segment = createSegmentFromTemplateByNumber(representation, number);
+    // TODO: REMOVE (TESTING PURPOSES ONLY)
     console.log('Segment Duration: ' + segmentDuration + ', Seconds: ' + seconds + ', Number: ' + number);
     return segment;
 };

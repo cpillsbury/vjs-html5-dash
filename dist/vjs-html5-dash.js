@@ -21,8 +21,8 @@ var existy = require('./util/existy.js'),
     mediaTypes = require('./manifest/MediaTypes.js');
 
 // TODO: Migrate methods below to a factory.
-function createSourceBufferDataQueueByType(manifest, mediaSource, mediaType) {
-    var sourceBufferType = manifest.getMediaSetByType(mediaType).getSourceBufferType(),
+function createSourceBufferDataQueueByType(manifestController, mediaSource, mediaType) {
+    var sourceBufferType = manifestController.getMediaSetByType(mediaType).getSourceBufferType(),
         // TODO: Try/catch block?
         sourceBuffer = mediaSource.addSourceBuffer(sourceBufferType);
     return new SourceBufferDataQueue(sourceBuffer);
@@ -101,20 +101,6 @@ var existy = require('./util/existy.js'),
     MIN_DESIRED_BUFFER_SIZE = 20,
     MAX_DESIRED_BUFFER_SIZE = 40;
 
-/*function loadSegmentAtTime(segmentLoader, sourceBufferDataQueue, presentationTime, callback, thisArg) {
-    var hasNextSegment = segmentLoader.loadSegmentAtTime(presentationTime);
-    if (!hasNextSegment) { return hasNextSegment; }
-
-    segmentLoader.one(segmentLoader.eventList.SEGMENT_LOADED, function segmentLoadedHandler(event) {
-        sourceBufferDataQueue.one(sourceBufferDataQueue.eventList.QUEUE_EMPTY, function(event) {
-            if (isFunction(callback)) { callback(); }
-        });
-        sourceBufferDataQueue.addToQueue(event.data);
-    });
-
-    return hasNextSegment;
-}*/
-
 function StreamLoader(segmentLoader, sourceBufferDataQueue, mediaType, tech) {
     this.__segmentLoader = segmentLoader;
     this.__sourceBufferDataQueue = sourceBufferDataQueue;
@@ -133,7 +119,6 @@ StreamLoader.prototype.getSegmentLoader = function() { return this.__segmentLoad
 StreamLoader.prototype.getSourceBufferDataQueue = function() { return this.__sourceBufferDataQueue; };
 
 StreamLoader.prototype.startLoadingSegments = function() {
-    //this.__loadingSegmentsMonitor();
     var self = this;
     this.__recheckSegmentLoadingHandler = function(event) {
         self.__checkSegmentLoading(MIN_DESIRED_BUFFER_SIZE, MAX_DESIRED_BUFFER_SIZE);
@@ -209,53 +194,6 @@ StreamLoader.prototype.__loadSegmentAtTime = function loadSegmentAtTime(presenta
 
     return hasNextSegment;
 };
-
-// TODO: MESSY. REFACTOR. (USE EVENTS? PASS IN REFS? PASS IN MIN/MAX BUFFER SIZE? CHECK FOR HALT CONDITION VIA PASSED IN FN?)
-/*StreamLoader.prototype.__loadingSegmentsMonitor = function() {
-    var self = this,
-        segmentLoader = self.__segmentLoader,
-        sourceBufferDataQueue = self.__sourceBufferDataQueue,
-        tech = self.__tech;
-
-    function keepLoadingSegments(minDesiredBufferSize, maxDesiredBufferSize) {
-        var currentTime = tech.currentTime(),
-            currentBufferSize = sourceBufferDataQueue.determineAmountBufferedFromTime(currentTime),
-            segmentDuration = segmentLoader.getCurrentSegmentList().getSegmentDuration(),
-            totalDuration = segmentLoader.getCurrentSegmentList().getTotalDuration(),
-            downloadPoint = (currentTime + currentBufferSize) + (segmentDuration / 2),
-            downloadRoundTripTime,
-            segmentDownloadDelay,
-            keepLoadingSegmentsIntern = function() { keepLoadingSegments.call(self, minDesiredBufferSize, maxDesiredBufferSize); },
-            loadSegmentAtTimeIntern = function(time) { loadSegmentAtTime(segmentLoader, sourceBufferDataQueue, time, keepLoadingSegmentsIntern); };
-
-        if ((downloadPoint >= totalDuration) || (currentBufferSize >= maxDesiredBufferSize)) {
-            // Holding pattern. Keep checking at a rate of segmentDuration until the condition changes.
-            setTimeout(keepLoadingSegmentsIntern, Math.floor(segmentDuration * 1000));
-            return;
-        }
-
-        if (currentBufferSize <= 0) {
-            loadSegmentAtTimeIntern(currentTime);
-        } else if (currentBufferSize < minDesiredBufferSize) {
-            loadSegmentAtTimeIntern(downloadPoint);
-        } else if (currentBufferSize < maxDesiredBufferSize) {
-            downloadRoundTripTime = segmentLoader.getLastDownloadRoundTripTimeSpan();
-            segmentDownloadDelay = segmentDuration - downloadRoundTripTime;
-            if (segmentDownloadDelay <= 0) {
-                loadSegmentAtTimeIntern(downloadPoint);
-            } else {
-                setTimeout(function() {
-                    currentTime = tech.currentTime();
-                    currentBufferSize = sourceBufferDataQueue.determineAmountBufferedFromTime(currentTime);
-                    downloadPoint = (currentTime + currentBufferSize) + (segmentDuration / 2);
-                    loadSegmentAtTimeIntern(downloadPoint);
-                }, Math.floor(segmentDownloadDelay * 1000));
-            }
-        }
-    }
-
-    keepLoadingSegments(MIN_DESIRED_BUFFER_SIZE, MAX_DESIRED_BUFFER_SIZE);
-};*/
 
 // Add event dispatcher functionality to prototype.
 extendObject(StreamLoader.prototype, EventDispatcherMixin);
@@ -637,6 +575,7 @@ createSegmentFromTemplateByTime = function(representation, seconds) {
     var segmentDuration = getSegmentDurationFromTemplate(representation),
         number = Math.floor(seconds / segmentDuration),
         segment = createSegmentFromTemplateByNumber(representation, number);
+    // TODO: REMOVE (TESTING PURPOSES ONLY)
     console.log('Segment Duration: ' + segmentDuration + ', Seconds: ' + seconds + ', Number: ' + number);
     return segment;
 };
@@ -1161,7 +1100,7 @@ function SegmentLoader(manifestController, mediaType) {
     if (!existy(mediaType)) { throw new Error('SegmentLoader must be initialized with a mediaType!'); }
     this.__manifest = manifestController;
     this.__mediaType = mediaType;
-    // TODO: Don't like this but ensures expected properties are set (Add method that setBandwidth() itself calls? Same w/getCurrentBandwidth()?)
+    // TODO: Don't like this: Need to centralize place(s) where & how __currentBandwidthChanged gets set to true/false.
     this.__currentBandwidth = this.getCurrentBandwidth();
     this.__currentBandwidthChanged = true;
 }
