@@ -8,8 +8,9 @@ var existy = require('../util/existy.js'),
     DEFAULT_RETRY_INTERVAL = 250;
 
 loadSegment = function(segment, callbackFn, retryCount, retryInterval) {
-    this.__lastDownloadStartTime = Number((new Date().getTime())/1000);
-    this.__lastDownloadCompleteTime = null;
+    var self = this;
+    self.__lastDownloadStartTime = Number((new Date().getTime())/1000);
+    self.__lastDownloadCompleteTime = null;
 
     var request = new XMLHttpRequest(),
         url = segment.getUrl();
@@ -21,7 +22,7 @@ loadSegment = function(segment, callbackFn, retryCount, retryInterval) {
             console.log('Failed to load Segment @ URL: ' + segment.getUrl());
             if (retryCount > 0) {
                 setTimeout(function() {
-                    loadSegment.call(this, segment, callbackFn, retryCount - 1, retryInterval);
+                    loadSegment.call(self, segment, callbackFn, retryCount - 1, retryInterval);
                 }, retryInterval);
             } else {
                 console.log('FAILED TO LOAD SEGMENT EVEN AFTER RETRIES');
@@ -29,16 +30,16 @@ loadSegment = function(segment, callbackFn, retryCount, retryInterval) {
             return;
         }
 
-        this.__lastDownloadCompleteTime = Number((new Date().getTime())/1000);
+        self.__lastDownloadCompleteTime = Number((new Date().getTime())/1000);
 
-        if (typeof callbackFn === 'function') { callbackFn(request.response); }
+        if (typeof callbackFn === 'function') { callbackFn.call(self, request.response); }
     };
     //request.onerror = request.onloadend = function() {
     request.onerror = function() {
         console.log('Failed to load Segment @ URL: ' + segment.getUrl());
         if (retryCount > 0) {
             setTimeout(function() {
-                loadSegment(segment, callbackFn, retryCount - 1, retryInterval);
+                loadSegment.call(self, segment, callbackFn, retryCount - 1, retryInterval);
             }, retryInterval);
         } else {
             console.log('FAILED TO LOAD SEGMENT EVEN AFTER RETRIES');
@@ -52,9 +53,11 @@ loadSegment = function(segment, callbackFn, retryCount, retryInterval) {
 function SegmentLoader(manifestController, mediaType) {
     if (!existy(manifestController)) { throw new Error('SegmentLoader must be initialized with a manifestController!'); }
     if (!existy(mediaType)) { throw new Error('SegmentLoader must be initialized with a mediaType!'); }
-    this.__manifestController = manifestController;
+    this.__manifest = manifestController;
     this.__mediaType = mediaType;
+    // TODO: Don't like this: Need to centralize place(s) where & how __currentBandwidthChanged gets set to true/false.
     this.__currentBandwidth = this.getCurrentBandwidth();
+    this.__currentBandwidthChanged = true;
 }
 
 SegmentLoader.prototype.eventList = {
@@ -63,7 +66,7 @@ SegmentLoader.prototype.eventList = {
 };
 
 SegmentLoader.prototype.__getMediaSet = function getMediaSet() {
-    var mediaSet = this.__manifestController.getMediaSetByType(this.__mediaType);
+    var mediaSet = this.__manifest.getMediaSetByType(this.__mediaType);
     return mediaSet;
 };
 
@@ -85,6 +88,8 @@ SegmentLoader.prototype.setCurrentBandwidth = function setCurrentBandwidth(bandw
     if (availableBandwidths.indexOf(bandwidth) < 0) {
         throw new Error('SegmentLoader::setCurrentBandwidth() must be set to one of the following values: ' + availableBandwidths.join(', '));
     }
+    if (bandwidth === this.__currentBandwidth) { return; }
+    this.__currentBandwidthChanged = true;
     this.__currentBandwidth = bandwidth;
 };
 
@@ -109,6 +114,8 @@ SegmentLoader.prototype.getCurrentSegment = function getCurrentSegment() {
 };
 
 SegmentLoader.prototype.getCurrentSegmentNumber = function getCurrentSegmentNumber() { return this.__currentSegmentNumber; };
+
+SegmentLoader.prototype.getCurrentSegmentStartTime = function getCurrentSegmentStartTime() { return this.getCurrentSegment().getStartNumber(); };
 
 SegmentLoader.prototype.getEndNumber = function() {
     var endNumber = this.__getMediaSet().getSegmentListEndNumber();
@@ -143,7 +150,7 @@ SegmentLoader.prototype.loadInitialization = function() {
 };
 
 SegmentLoader.prototype.loadNextSegment = function() {
-    var noCurrentSegmentNumber = ((this.__currentSegmentNumber === null) || (this.__currentSegmentNumber === undefined)),
+    var noCurrentSegmentNumber = existy(this.__currentSegmentNumber),
         number = noCurrentSegmentNumber ? this.getStartNumber() : this.__currentSegmentNumber + 1;
     return this.loadSegmentAtNumber(number);
 };
@@ -156,11 +163,24 @@ SegmentLoader.prototype.loadSegmentAtNumber = function(number) {
 
     var segment = this.getCurrentSegmentList().getSegmentByNumber(number);
 
-    loadSegment.call(this, segment, function(response) {
-        self.__currentSegmentNumber = segment.getNumber();
-        var initSegment = new Uint8Array(response);
-        self.trigger({ type:self.eventList.SEGMENT_LOADED, target:self, data:initSegment });
-    }, DEFAULT_RETRY_COUNT, DEFAULT_RETRY_INTERVAL);
+    if (this.__currentBandwidthChanged) {
+        this.one(this.eventList.INITIALIZATION_LOADED, function(event) {
+            var initSegment = event.data;
+            self.__currentBandwidthChanged = false;
+            loadSegment.call(self, segment, function(response) {
+                var segmentData = new Uint8Array(response);
+                self.__currentSegmentNumber = segment.getNumber();
+                self.trigger({ type:self.eventList.SEGMENT_LOADED, target:self, data:[initSegment, segmentData] });
+            }, DEFAULT_RETRY_COUNT, DEFAULT_RETRY_INTERVAL);
+        });
+        this.loadInitialization();
+    } else {
+        loadSegment.call(self, segment, function(response) {
+            var segmentData = new Uint8Array(response);
+            self.__currentSegmentNumber = segment.getNumber();
+            self.trigger({ type:self.eventList.SEGMENT_LOADED, target:self, data:segmentData });
+        }, DEFAULT_RETRY_COUNT, DEFAULT_RETRY_INTERVAL);
+    }
 
     return true;
 };
@@ -173,11 +193,24 @@ SegmentLoader.prototype.loadSegmentAtTime = function(presentationTime) {
 
     var segment = segmentList.getSegmentByTime(presentationTime);
 
-    loadSegment.call(this, segment, function(response) {
-        self.__currentSegmentNumber = segment.getNumber();
-        var initSegment = new Uint8Array(response);
-        self.trigger({ type:self.eventList.SEGMENT_LOADED, target:self, data:initSegment });
-    }, DEFAULT_RETRY_COUNT, DEFAULT_RETRY_INTERVAL);
+    if (this.__currentBandwidthChanged) {
+        this.one(this.eventList.INITIALIZATION_LOADED, function(event) {
+            var initSegment = event.data;
+            self.__currentBandwidthChanged = false;
+            loadSegment.call(self, segment, function(response) {
+                var segmentData = new Uint8Array(response);
+                self.__currentSegmentNumber = segment.getNumber();
+                self.trigger({ type:self.eventList.SEGMENT_LOADED, target:self, data:[initSegment, segmentData] });
+            }, DEFAULT_RETRY_COUNT, DEFAULT_RETRY_INTERVAL);
+        });
+        this.loadInitialization();
+    } else {
+        loadSegment.call(self, segment, function(response) {
+            var segmentData = new Uint8Array(response);
+            self.__currentSegmentNumber = segment.getNumber();
+            self.trigger({ type:self.eventList.SEGMENT_LOADED, target:self, data:segmentData });
+        }, DEFAULT_RETRY_COUNT, DEFAULT_RETRY_INTERVAL);
+    }
 
     return true;
 };

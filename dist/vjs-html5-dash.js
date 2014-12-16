@@ -17,36 +17,10 @@ if (typeof window !== "undefined") {
 var existy = require('./util/existy.js'),
     SegmentLoader = require('./segments/SegmentLoader.js'),
     SourceBufferDataQueue = require('./sourceBuffer/SourceBufferDataQueue.js'),
-    DownloadRateManager = require('./rules/DownloadRateManager.js'),
-    VideoReadyStateRule = require('./rules/downloadRate/VideoReadyStateRule.js'),
     StreamLoader = require('./StreamLoader.js'),
-    getMpd = require('./dash/mpd/getMpd.js'),
     mediaTypes = require('./manifest/MediaTypes.js');
 
-function loadInitialization(segmentLoader, sourceBufferDataQueue) {
-    segmentLoader.one(segmentLoader.eventList.INITIALIZATION_LOADED, function(event) {
-        sourceBufferDataQueue.one(sourceBufferDataQueue.eventList.QUEUE_EMPTY, function(event) {
-            loadSegments(segmentLoader, sourceBufferDataQueue);
-        });
-        sourceBufferDataQueue.addToQueue(event.data);
-    });
-    segmentLoader.loadInitialization();
-}
-
-function loadSegments(segmentLoader, sourceBufferDataQueue) {
-    segmentLoader.on(segmentLoader.eventList.SEGMENT_LOADED, function segmentLoadedHandler(event) {
-        sourceBufferDataQueue.one(sourceBufferDataQueue.eventList.QUEUE_EMPTY, function(event) {
-            var loading = segmentLoader.loadNextSegment();
-            if (!loading) {
-                segmentLoader.off(segmentLoader.eventList.SEGMENT_LOADED, segmentLoadedHandler);
-            }
-        });
-        sourceBufferDataQueue.addToQueue(event.data);
-    });
-
-    segmentLoader.loadNextSegment();
-}
-
+// TODO: Migrate methods below to a factory.
 function createSourceBufferDataQueueByType(manifest, mediaSource, mediaType) {
     var sourceBufferType = manifest.getMediaSetByType(mediaType).getSourceBufferType(),
         // TODO: Try/catch block?
@@ -54,57 +28,40 @@ function createSourceBufferDataQueueByType(manifest, mediaSource, mediaType) {
     return new SourceBufferDataQueue(sourceBuffer);
 }
 
-function createStreamLoaderForType(manifestController, mediaSource, mediaType) {
+function createStreamLoaderForType(manifestController, mediaSource, mediaType, tech) {
     var segmentLoader = new SegmentLoader(manifestController, mediaType),
         sourceBufferDataQueue = createSourceBufferDataQueueByType(manifestController, mediaSource, mediaType);
-    return new StreamLoader(segmentLoader, sourceBufferDataQueue, mediaType);
+    return new StreamLoader(segmentLoader, sourceBufferDataQueue, mediaType, tech);
 }
 
-function createStreamLoaders(manifestController, mediaSource) {
+function createStreamLoaders(manifestController, mediaSource, tech) {
     var matchedTypes = mediaTypes.filter(function(mediaType) {
             var exists = existy(manifestController.getMediaSetByType(mediaType));
-            return existy; }),
-        streamLoaders = matchedTypes.map(function(mediaType) { return createStreamLoaderForType(manifestController, mediaSource, mediaType); });
+            return exists; }),
+        streamLoaders = matchedTypes.map(function(mediaType) { return createStreamLoaderForType(manifestController, mediaSource, mediaType, tech); });
     return streamLoaders;
 }
 
 function PlaylistLoader(manifestController, mediaSource, tech) {
     var self = this;
-    this.__downloadRateMgr = new DownloadRateManager([new VideoReadyStateRule(tech)]);
-    this.__streamLoaders = createStreamLoaders(manifestController, mediaSource);
+    this.__tech = tech;
+    this.__streamLoaders = createStreamLoaders(manifestController, mediaSource, tech);
     this.__streamLoaders.forEach(function(streamLoader) {
-        /*tech.on('timeupdate', function(event) {
-            console.log('Current Time: ' + event.target.currentTime);
-        });*/
-        loadInitialization(streamLoader.getSegmentLoader(), streamLoader.getSourceBufferDataQueue());
+        streamLoader.startLoadingSegments();
     });
 
-    /*this.__downloadRateMgr.on(this.__downloadRateMgr.eventList.DOWNLOAD_RATE_CHANGED, function(event) {
-        var self2 = self;
-        console.log('Current Time: ' + tech.currentTime());
-    });*/
-
-    tech.on('seeked', function(event) {
-        var hasData = false;
-        console.log('Seeked Current Time: ' + tech.currentTime());
-        self.__streamLoaders.forEach(function(streamLoader) {
-            hasData = streamLoader.getSourceBufferDataQueue().hasBufferedDataForTime(tech.currentTime());
-            console.log('Has Data @ Time? ' + hasData);
-        });
-    });
-
-    tech.on('seeking', function(event) {
-        var hasData = false;
-        console.log('Seeking Current Time: ' + tech.currentTime());
-        self.__streamLoaders.forEach(function(streamLoader) {
-            hasData = streamLoader.getSourceBufferDataQueue().hasBufferedDataForTime(tech.currentTime());
-            console.log('Has Data @ Time? ' + hasData);
+    var changePlaybackRateEvents = ['seeking', 'canplay', 'canplaythrough'];
+    changePlaybackRateEvents.forEach(function(eventType) {
+        tech.on(eventType, function(event) {
+            var readyState = tech.el().readyState,
+                playbackRate = (readyState === 4) ? 1 : 0;
+            tech.setPlaybackRate(playbackRate);
         });
     });
 }
 
 module.exports = PlaylistLoader;
-},{"./StreamLoader.js":4,"./dash/mpd/getMpd.js":5,"./manifest/MediaTypes.js":13,"./rules/DownloadRateManager.js":15,"./rules/downloadRate/VideoReadyStateRule.js":18,"./segments/SegmentLoader.js":19,"./sourceBuffer/SourceBufferDataQueue.js":20,"./util/existy.js":21}],3:[function(require,module,exports){
+},{"./StreamLoader.js":4,"./manifest/MediaTypes.js":13,"./segments/SegmentLoader.js":15,"./sourceBuffer/SourceBufferDataQueue.js":16,"./util/existy.js":17}],3:[function(require,module,exports){
 'use strict';
 
 var MediaSource = require('global/window').MediaSource,
@@ -137,11 +94,37 @@ module.exports = SourceHandler;
 },{"./PlaylistLoader.js":2,"./manifest/ManifestController.js":12,"global/window":1}],4:[function(require,module,exports){
 'use strict';
 
-function StreamLoader(segmentLoader, sourceBufferDataQueue, mediaType) {
+var existy = require('./util/existy.js'),
+    isFunction = require('./util/isFunction.js'),
+    extendObject = require('./util/extendObject.js'),
+    EventDispatcherMixin = require('./events/EventDispatcherMixin.js'),
+    MIN_DESIRED_BUFFER_SIZE = 20,
+    MAX_DESIRED_BUFFER_SIZE = 40;
+
+/*function loadSegmentAtTime(segmentLoader, sourceBufferDataQueue, presentationTime, callback, thisArg) {
+    var hasNextSegment = segmentLoader.loadSegmentAtTime(presentationTime);
+    if (!hasNextSegment) { return hasNextSegment; }
+
+    segmentLoader.one(segmentLoader.eventList.SEGMENT_LOADED, function segmentLoadedHandler(event) {
+        sourceBufferDataQueue.one(sourceBufferDataQueue.eventList.QUEUE_EMPTY, function(event) {
+            if (isFunction(callback)) { callback(); }
+        });
+        sourceBufferDataQueue.addToQueue(event.data);
+    });
+
+    return hasNextSegment;
+}*/
+
+function StreamLoader(segmentLoader, sourceBufferDataQueue, mediaType, tech) {
     this.__segmentLoader = segmentLoader;
     this.__sourceBufferDataQueue = sourceBufferDataQueue;
     this.__mediaType = mediaType;
+    this.__tech = tech;
 }
+
+StreamLoader.prototype.eventList = {
+    RECHECK_SEGMENT_LOADING: 'recheckSegmentLoading'
+};
 
 StreamLoader.prototype.getMediaType = function() { return this.__mediaType; };
 
@@ -149,14 +132,136 @@ StreamLoader.prototype.getSegmentLoader = function() { return this.__segmentLoad
 
 StreamLoader.prototype.getSourceBufferDataQueue = function() { return this.__sourceBufferDataQueue; };
 
-StreamLoader.prototype.getCurrentSegmentNumber = function() { return this.__segmentLoader.getCurrentSegmentNumber(); };
+StreamLoader.prototype.startLoadingSegments = function() {
+    //this.__loadingSegmentsMonitor();
+    var self = this;
+    this.__recheckSegmentLoadingHandler = function(event) {
+        self.__checkSegmentLoading(MIN_DESIRED_BUFFER_SIZE, MAX_DESIRED_BUFFER_SIZE);
+    };
 
-StreamLoader.prototype.getLastDownloadRoundTripTimeSpan = function() {
-    return this.__segmentLoader.getLastDownloadStartTime();
+    this.on(this.eventList.RECHECK_SEGMENT_LOADING, this.__recheckSegmentLoadingHandler);
+
+    this.__checkSegmentLoading(MIN_DESIRED_BUFFER_SIZE, MAX_DESIRED_BUFFER_SIZE);
 };
 
+StreamLoader.prototype.stopLoadingSegments = function() {
+    if (!existy(this.__recheckSegmentLoadingHandler)) { return; }
+
+    this.off(this.eventList.RECHECK_SEGMENT_LOADING, this.__recheckSegmentLoadingHandler);
+    this.__recheckSegmentLoadingHandler = undefined;
+};
+
+StreamLoader.prototype.__checkSegmentLoading = function(minDesiredBufferSize, maxDesiredBufferSize) {
+    var self = this,
+        tech = self.__tech,
+        segmentLoader = self.__segmentLoader,
+        sourceBufferDataQueue = self.__sourceBufferDataQueue,
+        currentTime = tech.currentTime(),
+        currentBufferSize = sourceBufferDataQueue.determineAmountBufferedFromTime(currentTime),
+        segmentDuration = segmentLoader.getCurrentSegmentList().getSegmentDuration(),
+        totalDuration = segmentLoader.getCurrentSegmentList().getTotalDuration(),
+        downloadPoint = (currentTime + currentBufferSize) + (segmentDuration / 2),
+        downloadRoundTripTime,
+        segmentDownloadDelay;
+
+    if ((downloadPoint >= totalDuration) || (currentBufferSize >= maxDesiredBufferSize)) {
+        // Holding pattern. Keep checking at a rate of segmentDuration until the condition changes.
+        setTimeout(function() {
+            self.trigger({ type:self.eventList.RECHECK_SEGMENT_LOADING, target:self });
+        }, Math.floor(segmentDuration * 1000));
+        return;
+    }
+
+    if (currentBufferSize <= 0) {
+        self.__loadSegmentAtTime(currentTime);
+    } else if (currentBufferSize < minDesiredBufferSize) {
+        self.__loadSegmentAtTime(downloadPoint);
+    } else if (currentBufferSize < maxDesiredBufferSize) {
+        downloadRoundTripTime = segmentLoader.getLastDownloadRoundTripTimeSpan();
+        segmentDownloadDelay = segmentDuration - downloadRoundTripTime;
+        if (segmentDownloadDelay <= 0) {
+            self.__loadSegmentAtTime(downloadPoint);
+        } else {
+            setTimeout(function() {
+                currentTime = tech.currentTime();
+                currentBufferSize = sourceBufferDataQueue.determineAmountBufferedFromTime(currentTime);
+                downloadPoint = (currentTime + currentBufferSize) + (segmentDuration / 2);
+                self.__loadSegmentAtTime(downloadPoint);
+            }, Math.floor(segmentDownloadDelay * 1000));
+        }
+    }
+};
+
+StreamLoader.prototype.__loadSegmentAtTime = function loadSegmentAtTime(presentationTime) {
+    var self = this,
+        segmentLoader = self.__segmentLoader,
+        sourceBufferDataQueue = self.__sourceBufferDataQueue,
+        hasNextSegment = segmentLoader.loadSegmentAtTime(presentationTime);
+
+    if (!hasNextSegment) { return hasNextSegment; }
+
+    segmentLoader.one(segmentLoader.eventList.SEGMENT_LOADED, function segmentLoadedHandler(event) {
+        sourceBufferDataQueue.one(sourceBufferDataQueue.eventList.QUEUE_EMPTY, function(event) {
+            self.trigger({ type:self.eventList.RECHECK_SEGMENT_LOADING, target:self });
+        });
+        sourceBufferDataQueue.addToQueue(event.data);
+    });
+
+    return hasNextSegment;
+};
+
+// TODO: MESSY. REFACTOR. (USE EVENTS? PASS IN REFS? PASS IN MIN/MAX BUFFER SIZE? CHECK FOR HALT CONDITION VIA PASSED IN FN?)
+/*StreamLoader.prototype.__loadingSegmentsMonitor = function() {
+    var self = this,
+        segmentLoader = self.__segmentLoader,
+        sourceBufferDataQueue = self.__sourceBufferDataQueue,
+        tech = self.__tech;
+
+    function keepLoadingSegments(minDesiredBufferSize, maxDesiredBufferSize) {
+        var currentTime = tech.currentTime(),
+            currentBufferSize = sourceBufferDataQueue.determineAmountBufferedFromTime(currentTime),
+            segmentDuration = segmentLoader.getCurrentSegmentList().getSegmentDuration(),
+            totalDuration = segmentLoader.getCurrentSegmentList().getTotalDuration(),
+            downloadPoint = (currentTime + currentBufferSize) + (segmentDuration / 2),
+            downloadRoundTripTime,
+            segmentDownloadDelay,
+            keepLoadingSegmentsIntern = function() { keepLoadingSegments.call(self, minDesiredBufferSize, maxDesiredBufferSize); },
+            loadSegmentAtTimeIntern = function(time) { loadSegmentAtTime(segmentLoader, sourceBufferDataQueue, time, keepLoadingSegmentsIntern); };
+
+        if ((downloadPoint >= totalDuration) || (currentBufferSize >= maxDesiredBufferSize)) {
+            // Holding pattern. Keep checking at a rate of segmentDuration until the condition changes.
+            setTimeout(keepLoadingSegmentsIntern, Math.floor(segmentDuration * 1000));
+            return;
+        }
+
+        if (currentBufferSize <= 0) {
+            loadSegmentAtTimeIntern(currentTime);
+        } else if (currentBufferSize < minDesiredBufferSize) {
+            loadSegmentAtTimeIntern(downloadPoint);
+        } else if (currentBufferSize < maxDesiredBufferSize) {
+            downloadRoundTripTime = segmentLoader.getLastDownloadRoundTripTimeSpan();
+            segmentDownloadDelay = segmentDuration - downloadRoundTripTime;
+            if (segmentDownloadDelay <= 0) {
+                loadSegmentAtTimeIntern(downloadPoint);
+            } else {
+                setTimeout(function() {
+                    currentTime = tech.currentTime();
+                    currentBufferSize = sourceBufferDataQueue.determineAmountBufferedFromTime(currentTime);
+                    downloadPoint = (currentTime + currentBufferSize) + (segmentDuration / 2);
+                    loadSegmentAtTimeIntern(downloadPoint);
+                }, Math.floor(segmentDownloadDelay * 1000));
+            }
+        }
+    }
+
+    keepLoadingSegments(MIN_DESIRED_BUFFER_SIZE, MAX_DESIRED_BUFFER_SIZE);
+};*/
+
+// Add event dispatcher functionality to prototype.
+extendObject(StreamLoader.prototype, EventDispatcherMixin);
+
 module.exports = StreamLoader;
-},{}],5:[function(require,module,exports){
+},{"./events/EventDispatcherMixin.js":9,"./util/existy.js":17,"./util/extendObject.js":18,"./util/isFunction.js":20}],5:[function(require,module,exports){
 'use strict';
 
 var xmlfun = require('../../xmlfun.js'),
@@ -369,7 +474,7 @@ getAncestorObjectByName = function(xmlNode, tagName, mapFn) {
 };
 
 module.exports = getMpd;
-},{"../../xmlfun.js":28,"./util.js":6}],6:[function(require,module,exports){
+},{"../../xmlfun.js":24,"./util.js":6}],6:[function(require,module,exports){
 'use strict';
 
 var parseRootUrl,
@@ -530,8 +635,9 @@ createSegmentFromTemplateByNumber = function(representation, number) {
 
 createSegmentFromTemplateByTime = function(representation, seconds) {
     var segmentDuration = getSegmentDurationFromTemplate(representation),
-        number = Math.floor(getTotalDurationFromTemplate(representation) / segmentDuration),
+        number = Math.floor(seconds / segmentDuration),
         segment = createSegmentFromTemplateByNumber(representation, number);
+    console.log('Segment Duration: ' + segmentDuration + ', Seconds: ' + seconds + ', Number: ' + number);
     return segment;
 };
 
@@ -543,7 +649,7 @@ function getSegmentListForRepresentation(representation) {
 
 module.exports = getSegmentListForRepresentation;
 
-},{"../../xmlfun.js":28,"../mpd/util.js":6,"./segmentTemplate":8}],8:[function(require,module,exports){
+},{"../../xmlfun.js":24,"../mpd/util.js":6,"./segmentTemplate":8}],8:[function(require,module,exports){
 'use strict';
 
 var segmentTemplate,
@@ -811,9 +917,9 @@ Manifest.prototype.__clearSourceUri = function clearSourceUri() {
 Manifest.prototype.load = function load(/* optional */ callbackFn) {
     var self = this;
     loadManifest(self.__sourceUri, function(data) {
-        self.__manifestController = data.manifestXml;
+        self.__manifest = data.manifestXml;
         self.__setupUpdateInterval();
-        self.trigger({ type:self.eventList.MANIFEST_LOADED, target:self, data:self.__manifestController});
+        self.trigger({ type:self.eventList.MANIFEST_LOADED, target:self, data:self.__manifest});
         if (isFunction(callbackFn)) { callbackFn(data.manifestXml); }
     });
 };
@@ -836,7 +942,7 @@ Manifest.prototype.__setupUpdateInterval = function setupUpdateInterval() {
 
 Manifest.prototype.getMediaSetByType = function getMediaSetByType(type) {
     if (mediaTypes.indexOf(type) < 0) { throw new Error('Invalid type. Value must be one of: ' + mediaTypes.join(', ')); }
-    var adaptationSets = getMpd(this.__manifestController).getPeriods()[0].getAdaptationSets(),
+    var adaptationSets = getMpd(this.__manifest).getPeriods()[0].getAdaptationSets(),
         adaptationSetWithTypeMatch = adaptationSets.find(function(adaptationSet) {
             return (getMediaTypeFromMimeType(adaptationSet.getMimeType(), mediaTypes) === type);
         });
@@ -845,18 +951,18 @@ Manifest.prototype.getMediaSetByType = function getMediaSetByType(type) {
 };
 
 Manifest.prototype.getMediaSets = function getMediaSets() {
-    var adaptationSets = getMpd(this.__manifestController).getPeriods()[0].getAdaptationSets(),
+    var adaptationSets = getMpd(this.__manifest).getPeriods()[0].getAdaptationSets(),
         mediaSets = adaptationSets.map(function(adaptationSet) { return new MediaSet(adaptationSet); });
     return mediaSets;
 };
 
 Manifest.prototype.getStreamType = function getStreamType() {
-    var streamType = getMpd(this.__manifestController).getType();
+    var streamType = getMpd(this.__manifest).getType();
     return streamType;
 };
 
 Manifest.prototype.getUpdateRate = function getUpdateRate() {
-    var minimumUpdatePeriod = getMpd(this.__manifestController).getMinimumUpdatePeriod();
+    var minimumUpdatePeriod = getMpd(this.__manifest).getMinimumUpdatePeriod();
     return Number(minimumUpdatePeriod);
 };
 
@@ -959,7 +1065,7 @@ MediaSet.prototype.getSegmentListByBandwidth = function getSegmentListByBandwidt
 MediaSet.prototype.getAvailableBandwidths = function getAvailableBandwidths() {
     return this.__adaptationSet.getRepresentations().map(
         function(representation) {
-            return representation.getBandwidth();
+            return Number(representation.getBandwidth());
     }).filter(
         function(bandwidth) {
             return existy(bandwidth);
@@ -968,7 +1074,7 @@ MediaSet.prototype.getAvailableBandwidths = function getAvailableBandwidths() {
 };
 
 module.exports = Manifest;
-},{"../dash/mpd/getMpd.js":5,"../dash/segments/getSegmentListForRepresentation.js":7,"../events/EventDispatcherMixin.js":9,"../util/existy.js":21,"../util/extendObject.js":22,"../util/isFunction.js":24,"../util/isString.js":26,"../util/truthy.js":27,"./MediaTypes.js":13,"./loadManifest.js":14}],13:[function(require,module,exports){
+},{"../dash/mpd/getMpd.js":5,"../dash/segments/getSegmentListForRepresentation.js":7,"../events/EventDispatcherMixin.js":9,"../util/existy.js":17,"../util/extendObject.js":18,"../util/isFunction.js":20,"../util/isString.js":22,"../util/truthy.js":23,"./MediaTypes.js":13,"./loadManifest.js":14}],13:[function(require,module,exports){
 module.exports = ['video', 'audio'];
 },{}],14:[function(require,module,exports){
 'use strict';
@@ -998,170 +1104,6 @@ function loadManifest(url, callback) {
 
 module.exports = loadManifest;
 },{"../dash/mpd/util.js":6}],15:[function(require,module,exports){
-'use strict';
-
-var extendObject = require('../util/extendObject.js'),
-    EventDispatcherMixin = require('../events/EventDispatcherMixin.js'),
-    isArray = require('../util/isArray.js'),
-    downloadRates = require('./downloadRate/DownloadRates.js'),
-    eventList = require('./downloadRate/DownloadRateEventTypes.js');
-
-function addEventHandlerToRule(self, rule) {
-    rule.on(self.eventList.DOWNLOAD_RATE_CHANGED, function(event) {
-        self.determineDownloadRate();
-    });
-}
-
-function DownloadRateManager(downloadRateRules) {
-    var self = this;
-    if (isArray(downloadRateRules)) { this.__downloadRateRules = downloadRateRules; }
-    else if (!!downloadRateRules) { this.__downloadRateRules = [downloadRateRules]; }
-    else { this.__downloadRateRules = []; }
-    //this.__downloadRateRules = isArray(downloadRateRules) || [];
-    this.__downloadRateRules.forEach(function(rule) {
-        addEventHandlerToRule(self, rule);
-    });
-    this.__lastDownloadRate = this.downloadRates.DONT_DOWNLOAD;
-    this.determineDownloadRate();
-}
-
-DownloadRateManager.prototype.eventList = eventList;
-
-DownloadRateManager.prototype.downloadRates = downloadRates;
-
-DownloadRateManager.prototype.determineDownloadRate = function() {
-    var self = this,
-        currentDownloadRate,
-        finalDownloadRate = downloadRates.DONT_DOWNLOAD;
-
-    // TODO: Make relationship between rules smarter once we implement multiple rules.
-    self.__downloadRateRules.forEach(function(downloadRateRule) {
-        currentDownloadRate = downloadRateRule.getDownloadRate();
-        if (currentDownloadRate > finalDownloadRate) { finalDownloadRate = currentDownloadRate; }
-    });
-
-    if (finalDownloadRate !== self.__lastDownloadRate) {
-        self.__lastDownloadRate = finalDownloadRate;
-        self.trigger({
-            type:self.eventList.DOWNLOAD_RATE_CHANGED,
-            target:self,
-            downloadRate:self.__lastDownloadRate
-        });
-    }
-
-    return finalDownloadRate;
-};
-
-DownloadRateManager.prototype.addDownloadRateRule = function(downloadRateRule) {
-    var self = this;
-    self.__downloadRateRules.push(downloadRateRule);
-    addEventHandlerToRule(self, downloadRateRule);
-};
-
-// Add event dispatcher functionality to prototype.
-extendObject(DownloadRateManager.prototype, EventDispatcherMixin);
-
-module.exports = DownloadRateManager;
-},{"../events/EventDispatcherMixin.js":9,"../util/extendObject.js":22,"../util/isArray.js":23,"./downloadRate/DownloadRateEventTypes.js":16,"./downloadRate/DownloadRates.js":17}],16:[function(require,module,exports){
-var eventList = {
-    DOWNLOAD_RATE_CHANGED: 'downloadRateChanged'
-};
-
-module.exports = eventList;
-},{}],17:[function(require,module,exports){
-'use strict';
-
-var downloadRates = {
-    DONT_DOWNLOAD: 0,
-    PLAYBACK_RATE: 1000,
-    DOWNLOAD_RATE: 10000
-};
-
-module.exports = downloadRates;
-},{}],18:[function(require,module,exports){
-'use strict';
-
-var extendObject = require('../../util/extendObject.js'),
-    EventDispatcherMixin = require('../../events/EventDispatcherMixin.js'),
-    downloadRates = require('./DownloadRates.js'),
-    eventList = require('./DownloadRateEventTypes.js'),
-    downloadAndPlaybackEvents = [
-        'loadstart',
-        'durationchange',
-        'loadedmetadata',
-        'loadeddata',
-        'progress',
-        'canplay',
-        'canplaythrough'
-    ],
-    readyStates = {
-        HAVE_NOTHING: 0,
-        HAVE_METADATA: 1,
-        HAVE_CURRENT_DATA: 2,
-        HAVE_FUTURE_DATA: 3,
-        HAVE_ENOUGH_DATA: 4
-    };
-
-function getReadyState(tech) {
-    return tech.el().readyState;
-}
-
-function VideoReadyStateRule(tech) {
-    var self = this;
-    // TODO: Null/type check
-    this.__tech = tech;
-    this.__downloadRate = this.downloadRates.DONT_DOWNLOAD;
-
-    function determineDownloadRate() {
-        var downloadRate = (getReadyState(self.__tech) === readyStates.HAVE_ENOUGH_DATA) ?
-            self.downloadRates.PLAYBACK_RATE :
-            self.downloadRates.DOWNLOAD_RATE;
-        return downloadRate;
-    }
-
-    function updateDownloadRate() {
-        var newDownloadRate = determineDownloadRate();
-        if (self.__downloadRate !== newDownloadRate) {
-            console.log('DOWNLOAD RATE CHANGED TO: ' + newDownloadRate);
-            self.__downloadRate = newDownloadRate;
-            self.trigger({
-                type:self.eventList.DOWNLOAD_RATE_CHANGED,
-                target:self,
-                downloadRate:self.__downloadRate
-            });
-        }
-    }
-
-    downloadAndPlaybackEvents.forEach(function(eventName) {
-        tech.on(eventName, function() {
-            updateDownloadRate();
-        });
-    });
-
-    updateDownloadRate();
-}
-
-VideoReadyStateRule.prototype.eventList = eventList;
-
-// Value Meanings:
-//
-// DONT_DOWNLOAD -  Should not download segments.
-// PLAYBACK_RATE -  Download the next segment at the rate it takes to complete playback of the previous segment.
-//                  In other words, once the data for the current segment has been downloaded,
-//                  wait until segment.getDuration() seconds of stream playback have elapsed before starting the
-//                  download of the next segment.
-// DOWNLOAD_RATE -  Download the next segment once the previous segment has finished downloading.
-VideoReadyStateRule.prototype.downloadRates = downloadRates;
-
-VideoReadyStateRule.prototype.getDownloadRate = function() {
-    return this.__downloadRate;
-};
-
-// Add event dispatcher functionality to prototype.
-extendObject(VideoReadyStateRule.prototype, EventDispatcherMixin);
-
-module.exports = VideoReadyStateRule;
-},{"../../events/EventDispatcherMixin.js":9,"../../util/extendObject.js":22,"./DownloadRateEventTypes.js":16,"./DownloadRates.js":17}],19:[function(require,module,exports){
 
 var existy = require('../util/existy.js'),
     isNumber = require('../util/isNumber.js'),
@@ -1172,8 +1114,9 @@ var existy = require('../util/existy.js'),
     DEFAULT_RETRY_INTERVAL = 250;
 
 loadSegment = function(segment, callbackFn, retryCount, retryInterval) {
-    this.__lastDownloadStartTime = Number((new Date().getTime())/1000);
-    this.__lastDownloadCompleteTime = null;
+    var self = this;
+    self.__lastDownloadStartTime = Number((new Date().getTime())/1000);
+    self.__lastDownloadCompleteTime = null;
 
     var request = new XMLHttpRequest(),
         url = segment.getUrl();
@@ -1185,7 +1128,7 @@ loadSegment = function(segment, callbackFn, retryCount, retryInterval) {
             console.log('Failed to load Segment @ URL: ' + segment.getUrl());
             if (retryCount > 0) {
                 setTimeout(function() {
-                    loadSegment.call(this, segment, callbackFn, retryCount - 1, retryInterval);
+                    loadSegment.call(self, segment, callbackFn, retryCount - 1, retryInterval);
                 }, retryInterval);
             } else {
                 console.log('FAILED TO LOAD SEGMENT EVEN AFTER RETRIES');
@@ -1193,16 +1136,16 @@ loadSegment = function(segment, callbackFn, retryCount, retryInterval) {
             return;
         }
 
-        this.__lastDownloadCompleteTime = Number((new Date().getTime())/1000);
+        self.__lastDownloadCompleteTime = Number((new Date().getTime())/1000);
 
-        if (typeof callbackFn === 'function') { callbackFn(request.response); }
+        if (typeof callbackFn === 'function') { callbackFn.call(self, request.response); }
     };
     //request.onerror = request.onloadend = function() {
     request.onerror = function() {
         console.log('Failed to load Segment @ URL: ' + segment.getUrl());
         if (retryCount > 0) {
             setTimeout(function() {
-                loadSegment(segment, callbackFn, retryCount - 1, retryInterval);
+                loadSegment.call(self, segment, callbackFn, retryCount - 1, retryInterval);
             }, retryInterval);
         } else {
             console.log('FAILED TO LOAD SEGMENT EVEN AFTER RETRIES');
@@ -1216,9 +1159,11 @@ loadSegment = function(segment, callbackFn, retryCount, retryInterval) {
 function SegmentLoader(manifestController, mediaType) {
     if (!existy(manifestController)) { throw new Error('SegmentLoader must be initialized with a manifestController!'); }
     if (!existy(mediaType)) { throw new Error('SegmentLoader must be initialized with a mediaType!'); }
-    this.__manifestController = manifestController;
+    this.__manifest = manifestController;
     this.__mediaType = mediaType;
+    // TODO: Don't like this but ensures expected properties are set (Add method that setBandwidth() itself calls? Same w/getCurrentBandwidth()?)
     this.__currentBandwidth = this.getCurrentBandwidth();
+    this.__currentBandwidthChanged = true;
 }
 
 SegmentLoader.prototype.eventList = {
@@ -1227,7 +1172,7 @@ SegmentLoader.prototype.eventList = {
 };
 
 SegmentLoader.prototype.__getMediaSet = function getMediaSet() {
-    var mediaSet = this.__manifestController.getMediaSetByType(this.__mediaType);
+    var mediaSet = this.__manifest.getMediaSetByType(this.__mediaType);
     return mediaSet;
 };
 
@@ -1249,6 +1194,8 @@ SegmentLoader.prototype.setCurrentBandwidth = function setCurrentBandwidth(bandw
     if (availableBandwidths.indexOf(bandwidth) < 0) {
         throw new Error('SegmentLoader::setCurrentBandwidth() must be set to one of the following values: ' + availableBandwidths.join(', '));
     }
+    if (bandwidth === this.__currentBandwidth) { return; }
+    this.__currentBandwidthChanged = true;
     this.__currentBandwidth = bandwidth;
 };
 
@@ -1273,6 +1220,8 @@ SegmentLoader.prototype.getCurrentSegment = function getCurrentSegment() {
 };
 
 SegmentLoader.prototype.getCurrentSegmentNumber = function getCurrentSegmentNumber() { return this.__currentSegmentNumber; };
+
+SegmentLoader.prototype.getCurrentSegmentStartTime = function getCurrentSegmentStartTime() { return this.getCurrentSegment().getStartNumber(); };
 
 SegmentLoader.prototype.getEndNumber = function() {
     var endNumber = this.__getMediaSet().getSegmentListEndNumber();
@@ -1307,7 +1256,7 @@ SegmentLoader.prototype.loadInitialization = function() {
 };
 
 SegmentLoader.prototype.loadNextSegment = function() {
-    var noCurrentSegmentNumber = ((this.__currentSegmentNumber === null) || (this.__currentSegmentNumber === undefined)),
+    var noCurrentSegmentNumber = existy(this.__currentSegmentNumber),
         number = noCurrentSegmentNumber ? this.getStartNumber() : this.__currentSegmentNumber + 1;
     return this.loadSegmentAtNumber(number);
 };
@@ -1320,11 +1269,24 @@ SegmentLoader.prototype.loadSegmentAtNumber = function(number) {
 
     var segment = this.getCurrentSegmentList().getSegmentByNumber(number);
 
-    loadSegment.call(this, segment, function(response) {
-        self.__currentSegmentNumber = segment.getNumber();
-        var initSegment = new Uint8Array(response);
-        self.trigger({ type:self.eventList.SEGMENT_LOADED, target:self, data:initSegment });
-    }, DEFAULT_RETRY_COUNT, DEFAULT_RETRY_INTERVAL);
+    if (this.__currentBandwidthChanged) {
+        this.one(this.eventList.INITIALIZATION_LOADED, function(event) {
+            var initSegment = event.data;
+            self.__currentBandwidthChanged = false;
+            loadSegment.call(self, segment, function(response) {
+                var segmentData = new Uint8Array(response);
+                self.__currentSegmentNumber = segment.getNumber();
+                self.trigger({ type:self.eventList.SEGMENT_LOADED, target:self, data:[initSegment, segmentData] });
+            }, DEFAULT_RETRY_COUNT, DEFAULT_RETRY_INTERVAL);
+        });
+        this.loadInitialization();
+    } else {
+        loadSegment.call(self, segment, function(response) {
+            var segmentData = new Uint8Array(response);
+            self.__currentSegmentNumber = segment.getNumber();
+            self.trigger({ type:self.eventList.SEGMENT_LOADED, target:self, data:segmentData });
+        }, DEFAULT_RETRY_COUNT, DEFAULT_RETRY_INTERVAL);
+    }
 
     return true;
 };
@@ -1337,11 +1299,24 @@ SegmentLoader.prototype.loadSegmentAtTime = function(presentationTime) {
 
     var segment = segmentList.getSegmentByTime(presentationTime);
 
-    loadSegment.call(this, segment, function(response) {
-        self.__currentSegmentNumber = segment.getNumber();
-        var initSegment = new Uint8Array(response);
-        self.trigger({ type:self.eventList.SEGMENT_LOADED, target:self, data:initSegment });
-    }, DEFAULT_RETRY_COUNT, DEFAULT_RETRY_INTERVAL);
+    if (this.__currentBandwidthChanged) {
+        this.one(this.eventList.INITIALIZATION_LOADED, function(event) {
+            var initSegment = event.data;
+            self.__currentBandwidthChanged = false;
+            loadSegment.call(self, segment, function(response) {
+                var segmentData = new Uint8Array(response);
+                self.__currentSegmentNumber = segment.getNumber();
+                self.trigger({ type:self.eventList.SEGMENT_LOADED, target:self, data:[initSegment, segmentData] });
+            }, DEFAULT_RETRY_COUNT, DEFAULT_RETRY_INTERVAL);
+        });
+        this.loadInitialization();
+    } else {
+        loadSegment.call(self, segment, function(response) {
+            var segmentData = new Uint8Array(response);
+            self.__currentSegmentNumber = segment.getNumber();
+            self.trigger({ type:self.eventList.SEGMENT_LOADED, target:self, data:segmentData });
+        }, DEFAULT_RETRY_COUNT, DEFAULT_RETRY_INTERVAL);
+    }
 
     return true;
 };
@@ -1350,10 +1325,13 @@ SegmentLoader.prototype.loadSegmentAtTime = function(presentationTime) {
 extendObject(SegmentLoader.prototype, EventDispatcherMixin);
 
 module.exports = SegmentLoader;
-},{"../events/EventDispatcherMixin.js":9,"../util/existy.js":21,"../util/extendObject.js":22,"../util/isNumber.js":25}],20:[function(require,module,exports){
+},{"../events/EventDispatcherMixin.js":9,"../util/existy.js":17,"../util/extendObject.js":18,"../util/isNumber.js":21}],16:[function(require,module,exports){
 'use strict';
 
-var extendObject = require('../util/extendObject.js'),
+var isFunction = require('../util/isFunction.js'),
+    isArray = require('../util/isArray.js'),
+    existy = require('../util/existy.js'),
+    extendObject = require('../util/extendObject.js'),
     EventDispatcherMixin = require('../events/EventDispatcherMixin.js');
 
 function SourceBufferDataQueue(sourceBuffer) {
@@ -1389,11 +1367,12 @@ SourceBufferDataQueue.prototype.eventList = {
 };
 
 SourceBufferDataQueue.prototype.addToQueue = function(data) {
-    // TODO: Check for existence/type? Convert to Uint8Array externally or internally? (Currently assuming external)
+    if (!existy(data) || (isArray(data) && data.length <= 0)) { return; }
+    if (!isArray(data)) { data = [data]; }
     // If nothing is in the queue, go ahead and immediately append the segment data to the source buffer.
-    if ((this.__dataQueue.length === 0) && (!this.__sourceBuffer.updating)) { this.__sourceBuffer.appendBuffer(data); }
+    if ((this.__dataQueue.length === 0) && (!this.__sourceBuffer.updating)) { this.__sourceBuffer.appendBuffer(data.shift()); }
     // Otherwise, push onto queue and wait for the next update event before appending segment data to source buffer.
-    else { this.__dataQueue.push(data); }
+    else { this.__dataQueue = this.__dataQueue.concat(data); }
 };
 
 SourceBufferDataQueue.prototype.clearQueue = function() {
@@ -1401,8 +1380,22 @@ SourceBufferDataQueue.prototype.clearQueue = function() {
 };
 
 SourceBufferDataQueue.prototype.hasBufferedDataForTime = function(presentationTime) {
-    var timeRanges = this.__sourceBuffer.buffered,
-        timeRangesLength = timeRanges.length,
+    return checkTimeRangesForTime(this.__sourceBuffer.buffered, presentationTime, function(startTime, endTime) {
+        return ((startTime >= 0) || (endTime >= 0));
+    });
+};
+
+SourceBufferDataQueue.prototype.determineAmountBufferedFromTime = function(presentationTime) {
+    // If the return value is < 0, no data is buffered @ presentationTime.
+    return checkTimeRangesForTime(this.__sourceBuffer.buffered, presentationTime,
+        function(startTime, endTime, presentationTime) {
+            return endTime - presentationTime;
+        }
+    );
+};
+
+function checkTimeRangesForTime(timeRanges, time, callback) {
+    var timeRangesLength = timeRanges.length,
         i = 0,
         currentStartTime,
         currentEndTime;
@@ -1410,23 +1403,30 @@ SourceBufferDataQueue.prototype.hasBufferedDataForTime = function(presentationTi
     for (i; i<timeRangesLength; i++) {
         currentStartTime = timeRanges.start(i);
         currentEndTime = timeRanges.end(i);
-        if ((presentationTime >= currentStartTime) && (presentationTime <= currentEndTime)) { return true; }
+        if ((time >= currentStartTime) && (time <= currentEndTime)) {
+            return isFunction(callback) ? callback(currentStartTime, currentEndTime, time) : true;
+        } else if (currentStartTime > time) {
+            // If the currentStartTime is greater than the time we're looking for, that means we've reached a time range
+            // that's past the time we're looking for (since TimeRanges should be ordered chronologically). If so, we
+            // can short circuit.
+            break;
+        }
     }
 
-    return false;
-};
+    return isFunction(callback) ? callback(-1, -1, time) : false;
+}
 
 // Add event dispatcher functionality to prototype.
 extendObject(SourceBufferDataQueue.prototype, EventDispatcherMixin);
 
 module.exports = SourceBufferDataQueue;
-},{"../events/EventDispatcherMixin.js":9,"../util/extendObject.js":22}],21:[function(require,module,exports){
+},{"../events/EventDispatcherMixin.js":9,"../util/existy.js":17,"../util/extendObject.js":18,"../util/isArray.js":19,"../util/isFunction.js":20}],17:[function(require,module,exports){
 'use strict';
 
 function existy(x) { return (x !== null) && (x !== undefined); }
 
 module.exports = existy;
-},{}],22:[function(require,module,exports){
+},{}],18:[function(require,module,exports){
 'use strict';
 
 // Extend a given object with all the properties in passed-in object(s).
@@ -1442,7 +1442,7 @@ var extendObject = function(obj /*, extendObject1, extendObject2, ..., extendObj
 };
 
 module.exports = extendObject;
-},{}],23:[function(require,module,exports){
+},{}],19:[function(require,module,exports){
 'use strict';
 
 var genericObjType = function(){},
@@ -1453,7 +1453,7 @@ function isArray(obj) {
 }
 
 module.exports = isArray;
-},{}],24:[function(require,module,exports){
+},{}],20:[function(require,module,exports){
 'use strict';
 
 var genericObjType = function(){},
@@ -1470,7 +1470,7 @@ if (isFunction(/x/)) {
 }
 
 module.exports = isFunction;
-},{}],25:[function(require,module,exports){
+},{}],21:[function(require,module,exports){
 'use strict';
 
 var genericObjType = function(){},
@@ -1482,7 +1482,7 @@ function isNumber(value) {
 }
 
 module.exports = isNumber;
-},{}],26:[function(require,module,exports){
+},{}],22:[function(require,module,exports){
 'use strict';
 
 var genericObjType = function(){},
@@ -1494,7 +1494,7 @@ var isString = function isString(value) {
 };
 
 module.exports = isString;
-},{}],27:[function(require,module,exports){
+},{}],23:[function(require,module,exports){
 'use strict';
 
 var existy = require('./existy.js');
@@ -1506,7 +1506,7 @@ var existy = require('./existy.js');
 function truthy(x) { return (x !== false) && existy(x); }
 
 module.exports = truthy;
-},{"./existy.js":21}],28:[function(require,module,exports){
+},{"./existy.js":17}],24:[function(require,module,exports){
 'use strict';
 
 // TODO: Refactor to separate js files & modules & remove from here.

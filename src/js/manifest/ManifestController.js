@@ -81,9 +81,9 @@ Manifest.prototype.__clearSourceUri = function clearSourceUri() {
 Manifest.prototype.load = function load(/* optional */ callbackFn) {
     var self = this;
     loadManifest(self.__sourceUri, function(data) {
-        self.__manifestController = data.manifestXml;
+        self.__manifest = data.manifestXml;
         self.__setupUpdateInterval();
-        self.trigger({ type:self.eventList.MANIFEST_LOADED, target:self, data:self.__manifestController});
+        self.trigger({ type:self.eventList.MANIFEST_LOADED, target:self, data:self.__manifest});
         if (isFunction(callbackFn)) { callbackFn(data.manifestXml); }
     });
 };
@@ -106,7 +106,7 @@ Manifest.prototype.__setupUpdateInterval = function setupUpdateInterval() {
 
 Manifest.prototype.getMediaSetByType = function getMediaSetByType(type) {
     if (mediaTypes.indexOf(type) < 0) { throw new Error('Invalid type. Value must be one of: ' + mediaTypes.join(', ')); }
-    var adaptationSets = getMpd(this.__manifestController).getPeriods()[0].getAdaptationSets(),
+    var adaptationSets = getMpd(this.__manifest).getPeriods()[0].getAdaptationSets(),
         adaptationSetWithTypeMatch = adaptationSets.find(function(adaptationSet) {
             return (getMediaTypeFromMimeType(adaptationSet.getMimeType(), mediaTypes) === type);
         });
@@ -115,18 +115,18 @@ Manifest.prototype.getMediaSetByType = function getMediaSetByType(type) {
 };
 
 Manifest.prototype.getMediaSets = function getMediaSets() {
-    var adaptationSets = getMpd(this.__manifestController).getPeriods()[0].getAdaptationSets(),
+    var adaptationSets = getMpd(this.__manifest).getPeriods()[0].getAdaptationSets(),
         mediaSets = adaptationSets.map(function(adaptationSet) { return new MediaSet(adaptationSet); });
     return mediaSets;
 };
 
 Manifest.prototype.getStreamType = function getStreamType() {
-    var streamType = getMpd(this.__manifestController).getType();
+    var streamType = getMpd(this.__manifest).getType();
     return streamType;
 };
 
 Manifest.prototype.getUpdateRate = function getUpdateRate() {
-    var minimumUpdatePeriod = getMpd(this.__manifestController).getMinimumUpdatePeriod();
+    var minimumUpdatePeriod = getMpd(this.__manifest).getMinimumUpdatePeriod();
     return Number(minimumUpdatePeriod);
 };
 
@@ -229,7 +229,7 @@ MediaSet.prototype.getSegmentListByBandwidth = function getSegmentListByBandwidt
 MediaSet.prototype.getAvailableBandwidths = function getAvailableBandwidths() {
     return this.__adaptationSet.getRepresentations().map(
         function(representation) {
-            return representation.getBandwidth();
+            return Number(representation.getBandwidth());
     }).filter(
         function(bandwidth) {
             return existy(bandwidth);

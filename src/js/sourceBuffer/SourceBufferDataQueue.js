@@ -1,6 +1,9 @@
 'use strict';
 
-var extendObject = require('../util/extendObject.js'),
+var isFunction = require('../util/isFunction.js'),
+    isArray = require('../util/isArray.js'),
+    existy = require('../util/existy.js'),
+    extendObject = require('../util/extendObject.js'),
     EventDispatcherMixin = require('../events/EventDispatcherMixin.js');
 
 function SourceBufferDataQueue(sourceBuffer) {
@@ -36,11 +39,12 @@ SourceBufferDataQueue.prototype.eventList = {
 };
 
 SourceBufferDataQueue.prototype.addToQueue = function(data) {
-    // TODO: Check for existence/type? Convert to Uint8Array externally or internally? (Currently assuming external)
+    if (!existy(data) || (isArray(data) && data.length <= 0)) { return; }
+    if (!isArray(data)) { data = [data]; }
     // If nothing is in the queue, go ahead and immediately append the segment data to the source buffer.
-    if ((this.__dataQueue.length === 0) && (!this.__sourceBuffer.updating)) { this.__sourceBuffer.appendBuffer(data); }
+    if ((this.__dataQueue.length === 0) && (!this.__sourceBuffer.updating)) { this.__sourceBuffer.appendBuffer(data.shift()); }
     // Otherwise, push onto queue and wait for the next update event before appending segment data to source buffer.
-    else { this.__dataQueue.push(data); }
+    else { this.__dataQueue = this.__dataQueue.concat(data); }
 };
 
 SourceBufferDataQueue.prototype.clearQueue = function() {
@@ -48,8 +52,22 @@ SourceBufferDataQueue.prototype.clearQueue = function() {
 };
 
 SourceBufferDataQueue.prototype.hasBufferedDataForTime = function(presentationTime) {
-    var timeRanges = this.__sourceBuffer.buffered,
-        timeRangesLength = timeRanges.length,
+    return checkTimeRangesForTime(this.__sourceBuffer.buffered, presentationTime, function(startTime, endTime) {
+        return ((startTime >= 0) || (endTime >= 0));
+    });
+};
+
+SourceBufferDataQueue.prototype.determineAmountBufferedFromTime = function(presentationTime) {
+    // If the return value is < 0, no data is buffered @ presentationTime.
+    return checkTimeRangesForTime(this.__sourceBuffer.buffered, presentationTime,
+        function(startTime, endTime, presentationTime) {
+            return endTime - presentationTime;
+        }
+    );
+};
+
+function checkTimeRangesForTime(timeRanges, time, callback) {
+    var timeRangesLength = timeRanges.length,
         i = 0,
         currentStartTime,
         currentEndTime;
@@ -57,11 +75,18 @@ SourceBufferDataQueue.prototype.hasBufferedDataForTime = function(presentationTi
     for (i; i<timeRangesLength; i++) {
         currentStartTime = timeRanges.start(i);
         currentEndTime = timeRanges.end(i);
-        if ((presentationTime >= currentStartTime) && (presentationTime <= currentEndTime)) { return true; }
+        if ((time >= currentStartTime) && (time <= currentEndTime)) {
+            return isFunction(callback) ? callback(currentStartTime, currentEndTime, time) : true;
+        } else if (currentStartTime > time) {
+            // If the currentStartTime is greater than the time we're looking for, that means we've reached a time range
+            // that's past the time we're looking for (since TimeRanges should be ordered chronologically). If so, we
+            // can short circuit.
+            break;
+        }
     }
 
-    return false;
-};
+    return isFunction(callback) ? callback(-1, -1, time) : false;
+}
 
 // Add event dispatcher functionality to prototype.
 extendObject(SourceBufferDataQueue.prototype, EventDispatcherMixin);
