@@ -100,8 +100,21 @@ createSegmentFromTemplateByNumber = function(representation, number) {
         return number * getSegmentDurationFromTemplate(representation);
     };
     segment.getDuration = function() {
-        // TODO: Handle last segment (likely < segment duration)
-        return getSegmentDurationFromTemplate(representation);
+        // TODO: Verify
+        var standardSegmentDuration = getSegmentDurationFromTemplate(representation),
+            duration,
+            mediaPresentationTime,
+            precisionMultiplier;
+
+        if (getEndNumberFromTemplate(representation) === number) {
+            mediaPresentationTime = Number(representation.getMpd().getMediaPresentationTime());
+            // Handle floating point precision issue
+            precisionMultiplier = 1000;
+            duration = (((mediaPresentationTime * precisionMultiplier) % (standardSegmentDuration * precisionMultiplier)) / precisionMultiplier );
+        } else {
+            duration = standardSegmentDuration;
+        }
+        return duration;
     };
     segment.getNumber = function() { return number; };
     return segment;
