@@ -4,6 +4,8 @@ var existy = require('./util/existy.js'),
     isFunction = require('./util/isFunction.js'),
     extendObject = require('./util/extendObject.js'),
     EventDispatcherMixin = require('./events/EventDispatcherMixin.js'),
+    // TODO: Determine appropriate default size (or base on segment n x size/duration?)
+    // Must consider ABR Switching & Viewing experience of already-buffered segments.
     MIN_DESIRED_BUFFER_SIZE = 20,
     MAX_DESIRED_BUFFER_SIZE = 40;
 
@@ -17,7 +19,7 @@ function MediaTypeLoader(segmentLoader, sourceBufferDataQueue, mediaType, tech) 
 
 MediaTypeLoader.prototype.eventList = {
     RECHECK_SEGMENT_LOADING: 'recheckSegmentLoading',
-    RECHECK_CURRENT_SEGMENT_LIST: 'recheckCurrentSegmentList',
+    RECHECK_CURRENT_SEGMENT_LIST: 'recheckCurrentSegmentList'
 };
 
 MediaTypeLoader.prototype.getMediaType = function() { return this.__mediaType; };
