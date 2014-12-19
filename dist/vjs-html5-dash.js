@@ -184,39 +184,7 @@ function createMediaTypeLoaders(manifestController, mediaSource, tech) {
     return mediaTypeLoaders;
 }
 
-function sortSegmentListsByBandwidthAscending(segmentListA, segmentListB) {
-    var bandwidthA = segmentListA.getBandwidth(),
-        bandwidthB = segmentListB.getBandwidth();
-    return bandwidthA - bandwidthB;
-}
-
-function sortSegmentListsByResolutionAscending(segmentListA, segmentListB) {
-    var widthA = segmentListA.getWidth() || 0,
-        widthB = segmentListB.getWidth() || 0;
-    return widthA - widthB;
-}
-
-function sortSegmentListsByResolutionThenBandwidthAscending(segmentListA, segmentListB) {
-    var resolutionCompare = sortSegmentListsByResolutionAscending(segmentListA, segmentListB);
-    return (resolutionCompare !== 0) ? resolutionCompare : sortSegmentListsByBandwidthAscending(segmentListA, segmentListB);
-}
-
-function filterSegmentListsByResolution(segmentList, maxWidth, maxHeight) {
-    var width = segmentList.getWidth() || 0,
-        height = segmentList.getHeight() || 0;
-    return ((width <= maxWidth) && (height <= maxHeight));
-}
-
-function filterSegmentListsByDownloadRate(segmentList, currentSegmentList, downloadRateRatio) {
-    var segmentListBandwidth = segmentList.getBandwidth(),
-        currentSegmentListBandwidth = currentSegmentList.getBandwidth(),
-        segmentBandwidthRatio = segmentListBandwidth / currentSegmentListBandwidth;
-    return (downloadRateRatio >= segmentBandwidthRatio);
-}
-
 function PlaylistLoader(manifestController, mediaSource, tech) {
-    var self = this;
-    //this.__downloadRateMonitor = {};
     this.__tech = tech;
     this.__mediaTypeLoaders = createMediaTypeLoaders(manifestController, mediaSource, tech);
 
