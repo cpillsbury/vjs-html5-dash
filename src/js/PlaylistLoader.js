@@ -4,6 +4,7 @@ var existy = require('./util/existy.js'),
     SegmentLoader = require('./segments/SegmentLoader.js'),
     SourceBufferDataQueue = require('./sourceBuffer/SourceBufferDataQueue.js'),
     MediaTypeLoader = require('./MediaTypeLoader.js'),
+    selectSegmentList = require('./selectSegmentList.js'),
     mediaTypes = require('./manifest/MediaTypes.js');
 
 // TODO: Migrate methods below to a factory.
@@ -64,44 +65,36 @@ function PlaylistLoader(manifestController, mediaSource, tech) {
     this.__tech = tech;
     this.__mediaTypeLoaders = createMediaTypeLoaders(manifestController, mediaSource, tech);
 
-    tech.player().on('fullscreenchange', function(event) {
-        console.log('Player width x height: ' + tech.player().width() + 'x' + tech.player().height());
-        console.log('Screen width x height: ' + window.screen.width + 'x' + window.screen.height);
-    });
-
     this.__mediaTypeLoaders.forEach(function(mediaTypeLoader) {
-        var player = tech.player(),
-            segmentLoader = mediaTypeLoader.getSegmentLoader(),
-            mediaType = mediaTypeLoader.getMediaType(),
+        // MediaSet-specific variables
+        var segmentLoader = mediaTypeLoader.getSegmentLoader(),
             downloadRateRatio = 1.0,
-            currentSegmentList = segmentLoader.getCurrentSegmentList();
+            currentSegmentListBandwidth = segmentLoader.getCurrentSegmentList().getBandwidth(),
+            mediaType = mediaTypeLoader.getMediaType();
 
+        // TODO: Currently an event add order dependency. Refactor MediaTypeLoader & PlaylistLoader to change this?
         mediaTypeLoader.on(mediaTypeLoader.eventList.RECHECK_SEGMENT_LOADING, function(event) {
-            var sortedByBandwidth = manifestController.getMediaSetByType(mediaType).getSegmentLists().sort(sortSegmentListsByBandwidthAscending),
-                sortedByResolutionThenBandwidth = manifestController.getMediaSetByType(mediaType).getSegmentLists().sort(sortSegmentListsByResolutionThenBandwidthAscending),
-                filteredByDownloadRate = sortedByBandwidth.filter(function(segmentList) { return filterSegmentListsByDownloadRate(segmentList, currentSegmentList, downloadRateRatio); }),
-                filteredByResolution = sortedByResolutionThenBandwidth.filter(
-                    function(segmentList) {
-                        var width = player.isFullscreen() ? screen.width : player.width(),
-                            height = player.isFullscreen() ? screen.height : player.height();
-                        return filterSegmentListsByResolution(segmentList, width, height);
-                    }
-                ),
-                proposedSegmentList,
-                proposedBandwidth;
+            var mediaSet = manifestController.getMediaSetByType(mediaType),
+                isFullscreen = tech.player().isFullscreen(),
+                data = {},
+                selectedSegmentList;
 
-            proposedSegmentList = filteredByResolution[filteredByResolution.length - 1] || filteredByDownloadRate[filteredByDownloadRate.length - 1] || sortedByBandwidth[0];
-            proposedBandwidth = proposedSegmentList.getBandwidth();
+            data.downloadRateRatio = downloadRateRatio;
+            data.currentSegmentListBandwidth = currentSegmentListBandwidth;
+            data.width = isFullscreen ? window.screen.width : tech.player().width();
+            data.height = isFullscreen ? window.screen.height : tech.player().height();
 
-            console.log('Proposed Bandwidth for mediaType ' + mediaType + ': ' + proposedBandwidth);
+            selectedSegmentList = selectSegmentList(mediaSet, data);
 
-            segmentLoader.setCurrentBandwidth(proposedBandwidth);
+            // TODO: Should we refactor to set based on segmentList instead?
+            segmentLoader.setCurrentBandwidth(selectedSegmentList.getBandwidth());
         });
 
         segmentLoader.on(segmentLoader.eventList.DOWNLOAD_DATA_UPDATE, function(event) {
             downloadRateRatio = event.data.playbackTime / event.data.rtt;
-            currentSegmentList = manifestController.getMediaSetByType(mediaType).getSegmentListByBandwidth(event.data.bandwidth);
+            currentSegmentListBandwidth = event.data.bandwidth;
         });
+
         mediaTypeLoader.startLoadingSegments();
     });
 
@@ -110,7 +103,6 @@ function PlaylistLoader(manifestController, mediaSource, tech) {
         tech.on(eventType, function(event) {
             var readyState = tech.el().readyState,
                 playbackRate = (readyState === 4) ? 1 : 0;
-            console.log('Playback rate: ' + playbackRate);
             tech.setPlaybackRate(playbackRate);
         });
     });

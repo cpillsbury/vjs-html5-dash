@@ -152,13 +152,14 @@ MediaTypeLoader.prototype.__loadSegmentAtTime = function loadSegmentAtTime(prese
 extendObject(MediaTypeLoader.prototype, EventDispatcherMixin);
 
 module.exports = MediaTypeLoader;
-},{"./events/EventDispatcherMixin.js":9,"./util/existy.js":17,"./util/extendObject.js":18,"./util/isFunction.js":20}],3:[function(require,module,exports){
+},{"./events/EventDispatcherMixin.js":9,"./util/existy.js":18,"./util/extendObject.js":19,"./util/isFunction.js":21}],3:[function(require,module,exports){
 'use strict';
 
 var existy = require('./util/existy.js'),
     SegmentLoader = require('./segments/SegmentLoader.js'),
     SourceBufferDataQueue = require('./sourceBuffer/SourceBufferDataQueue.js'),
     MediaTypeLoader = require('./MediaTypeLoader.js'),
+    selectSegmentList = require('./selectSegmentList.js'),
     mediaTypes = require('./manifest/MediaTypes.js');
 
 // TODO: Migrate methods below to a factory.
@@ -219,44 +220,36 @@ function PlaylistLoader(manifestController, mediaSource, tech) {
     this.__tech = tech;
     this.__mediaTypeLoaders = createMediaTypeLoaders(manifestController, mediaSource, tech);
 
-    tech.player().on('fullscreenchange', function(event) {
-        console.log('Player width x height: ' + tech.player().width() + 'x' + tech.player().height());
-        console.log('Screen width x height: ' + window.screen.width + 'x' + window.screen.height);
-    });
-
     this.__mediaTypeLoaders.forEach(function(mediaTypeLoader) {
-        var player = tech.player(),
-            segmentLoader = mediaTypeLoader.getSegmentLoader(),
-            mediaType = mediaTypeLoader.getMediaType(),
+        // MediaSet-specific variables
+        var segmentLoader = mediaTypeLoader.getSegmentLoader(),
             downloadRateRatio = 1.0,
-            currentSegmentList = segmentLoader.getCurrentSegmentList();
+            currentSegmentListBandwidth = segmentLoader.getCurrentSegmentList().getBandwidth(),
+            mediaType = mediaTypeLoader.getMediaType();
 
+        // TODO: Currently an event add order dependency. Refactor MediaTypeLoader & PlaylistLoader to change this?
         mediaTypeLoader.on(mediaTypeLoader.eventList.RECHECK_SEGMENT_LOADING, function(event) {
-            var sortedByBandwidth = manifestController.getMediaSetByType(mediaType).getSegmentLists().sort(sortSegmentListsByBandwidthAscending),
-                sortedByResolutionThenBandwidth = manifestController.getMediaSetByType(mediaType).getSegmentLists().sort(sortSegmentListsByResolutionThenBandwidthAscending),
-                filteredByDownloadRate = sortedByBandwidth.filter(function(segmentList) { return filterSegmentListsByDownloadRate(segmentList, currentSegmentList, downloadRateRatio); }),
-                filteredByResolution = sortedByResolutionThenBandwidth.filter(
-                    function(segmentList) {
-                        var width = player.isFullscreen() ? screen.width : player.width(),
-                            height = player.isFullscreen() ? screen.height : player.height();
-                        return filterSegmentListsByResolution(segmentList, width, height);
-                    }
-                ),
-                proposedSegmentList,
-                proposedBandwidth;
+            var mediaSet = manifestController.getMediaSetByType(mediaType),
+                isFullscreen = tech.player().isFullscreen(),
+                data = {},
+                selectedSegmentList;
 
-            proposedSegmentList = filteredByResolution[filteredByResolution.length - 1] || filteredByDownloadRate[filteredByDownloadRate.length - 1] || sortedByBandwidth[0];
-            proposedBandwidth = proposedSegmentList.getBandwidth();
+            data.downloadRateRatio = downloadRateRatio;
+            data.currentSegmentListBandwidth = currentSegmentListBandwidth;
+            data.width = isFullscreen ? window.screen.width : tech.player().width();
+            data.height = isFullscreen ? window.screen.height : tech.player().height();
 
-            console.log('Proposed Bandwidth for mediaType ' + mediaType + ': ' + proposedBandwidth);
+            selectedSegmentList = selectSegmentList(mediaSet, data);
 
-            segmentLoader.setCurrentBandwidth(proposedBandwidth);
+            // TODO: Should we refactor to set based on segmentList instead?
+            segmentLoader.setCurrentBandwidth(selectedSegmentList.getBandwidth());
         });
 
         segmentLoader.on(segmentLoader.eventList.DOWNLOAD_DATA_UPDATE, function(event) {
             downloadRateRatio = event.data.playbackTime / event.data.rtt;
-            currentSegmentList = manifestController.getMediaSetByType(mediaType).getSegmentListByBandwidth(event.data.bandwidth);
+            currentSegmentListBandwidth = event.data.bandwidth;
         });
+
         mediaTypeLoader.startLoadingSegments();
     });
 
@@ -265,14 +258,13 @@ function PlaylistLoader(manifestController, mediaSource, tech) {
         tech.on(eventType, function(event) {
             var readyState = tech.el().readyState,
                 playbackRate = (readyState === 4) ? 1 : 0;
-            console.log('Playback rate: ' + playbackRate);
             tech.setPlaybackRate(playbackRate);
         });
     });
 }
 
 module.exports = PlaylistLoader;
-},{"./MediaTypeLoader.js":2,"./manifest/MediaTypes.js":13,"./segments/SegmentLoader.js":15,"./sourceBuffer/SourceBufferDataQueue.js":16,"./util/existy.js":17}],4:[function(require,module,exports){
+},{"./MediaTypeLoader.js":2,"./manifest/MediaTypes.js":13,"./segments/SegmentLoader.js":15,"./selectSegmentList.js":16,"./sourceBuffer/SourceBufferDataQueue.js":17,"./util/existy.js":18}],4:[function(require,module,exports){
 'use strict';
 
 var MediaSource = require('global/window').MediaSource,
@@ -517,7 +509,7 @@ getAncestorObjectByName = function(xmlNode, tagName, mapFn) {
 };
 
 module.exports = getMpd;
-},{"../../xmlfun.js":24,"./util.js":6}],6:[function(require,module,exports){
+},{"../../xmlfun.js":25,"./util.js":6}],6:[function(require,module,exports){
 'use strict';
 
 var parseRootUrl,
@@ -720,7 +712,7 @@ function getSegmentListForRepresentation(representation) {
 
 module.exports = getSegmentListForRepresentation;
 
-},{"../../util/existy.js":17,"../../xmlfun.js":24,"../mpd/util.js":6,"./segmentTemplate":8}],8:[function(require,module,exports){
+},{"../../util/existy.js":18,"../../xmlfun.js":25,"../mpd/util.js":6,"./segmentTemplate":8}],8:[function(require,module,exports){
 'use strict';
 
 var segmentTemplate,
@@ -1145,7 +1137,7 @@ MediaSet.prototype.getAvailableBandwidths = function getAvailableBandwidths() {
 };
 
 module.exports = Manifest;
-},{"../dash/mpd/getMpd.js":5,"../dash/segments/getSegmentListForRepresentation.js":7,"../events/EventDispatcherMixin.js":9,"../util/existy.js":17,"../util/extendObject.js":18,"../util/isFunction.js":20,"../util/isString.js":22,"../util/truthy.js":23,"./MediaTypes.js":13,"./loadManifest.js":14}],13:[function(require,module,exports){
+},{"../dash/mpd/getMpd.js":5,"../dash/segments/getSegmentListForRepresentation.js":7,"../events/EventDispatcherMixin.js":9,"../util/existy.js":18,"../util/extendObject.js":19,"../util/isFunction.js":21,"../util/isString.js":23,"../util/truthy.js":24,"./MediaTypes.js":13,"./loadManifest.js":14}],13:[function(require,module,exports){
 module.exports = ['video', 'audio'];
 },{}],14:[function(require,module,exports){
 'use strict';
@@ -1424,7 +1416,69 @@ SegmentLoader.prototype.loadSegmentAtTime = function(presentationTime) {
 extendObject(SegmentLoader.prototype, EventDispatcherMixin);
 
 module.exports = SegmentLoader;
-},{"../events/EventDispatcherMixin.js":9,"../util/existy.js":17,"../util/extendObject.js":18,"../util/isNumber.js":21}],16:[function(require,module,exports){
+},{"../events/EventDispatcherMixin.js":9,"../util/existy.js":18,"../util/extendObject.js":19,"../util/isNumber.js":22}],16:[function(require,module,exports){
+'use strict';
+
+function compareSegmentListsByBandwidthAscending(segmentListA, segmentListB) {
+    var bandwidthA = segmentListA.getBandwidth(),
+        bandwidthB = segmentListB.getBandwidth();
+    return bandwidthA - bandwidthB;
+}
+
+function compareSegmentListsByWidthAscending(segmentListA, segmentListB) {
+    var widthA = segmentListA.getWidth() || 0,
+        widthB = segmentListB.getWidth() || 0;
+    return widthA - widthB;
+}
+
+function compareSegmentListsByWidthThenBandwidthAscending(segmentListA, segmentListB) {
+    var resolutionCompare = compareSegmentListsByWidthAscending(segmentListA, segmentListB);
+    return (resolutionCompare !== 0) ? resolutionCompare : compareSegmentListsByBandwidthAscending(segmentListA, segmentListB);
+}
+
+function filterSegmentListsByResolution(segmentList, maxWidth, maxHeight) {
+    var width = segmentList.getWidth() || 0,
+        height = segmentList.getHeight() || 0;
+    return ((width <= maxWidth) && (height <= maxHeight));
+}
+
+function filterSegmentListsByDownloadRate(segmentList, currentSegmentListBandwidth, downloadRateRatio) {
+    var segmentListBandwidth = segmentList.getBandwidth(),
+        segmentBandwidthRatio = segmentListBandwidth / currentSegmentListBandwidth;
+    return (downloadRateRatio >= segmentBandwidthRatio);
+}
+
+// NOTE: Passing in mediaSet instead of mediaSet's SegmentList Array since sort is destructive and don't want to clone.
+//      Also allows for greater flexibility of fn.
+function selectSegmentList(mediaSet, data) {
+    var downloadRateRatio = data.downloadRateRatio,
+        currentSegmentListBandwidth = data.currentSegmentListBandwidth,
+        width = data.width,
+        height = data.height,
+        sortedByBandwidth = mediaSet.getSegmentLists().sort(compareSegmentListsByBandwidthAscending),
+        sortedByResolutionThenBandwidth = mediaSet.getSegmentLists().sort(compareSegmentListsByWidthThenBandwidthAscending),
+        filteredByDownloadRate,
+        filteredByResolution,
+        proposedSegmentList;
+
+    function filterByResolution(segmentList) {
+        return filterSegmentListsByResolution(segmentList, width, height);
+    }
+
+    function filterByDownloadRate(segmentList) {
+        return filterSegmentListsByDownloadRate(segmentList, currentSegmentListBandwidth, downloadRateRatio);
+    }
+
+    filteredByResolution = sortedByResolutionThenBandwidth.filter(filterByResolution);
+    filteredByDownloadRate = sortedByBandwidth.filter(filterByDownloadRate);
+
+    proposedSegmentList = filteredByResolution[filteredByResolution.length - 1] || filteredByDownloadRate[filteredByDownloadRate.length - 1] || sortedByBandwidth[0];
+
+    return proposedSegmentList;
+}
+
+module.exports = selectSegmentList;
+},{}],17:[function(require,module,exports){
 'use strict';
 
 var isFunction = require('../util/isFunction.js'),
@@ -1522,13 +1576,13 @@ function checkTimeRangesForTime(timeRanges, time, callback) {
 extendObject(SourceBufferDataQueue.prototype, EventDispatcherMixin);
 
 module.exports = SourceBufferDataQueue;
-},{"../events/EventDispatcherMixin.js":9,"../util/existy.js":17,"../util/extendObject.js":18,"../util/isArray.js":19,"../util/isFunction.js":20}],17:[function(require,module,exports){
+},{"../events/EventDispatcherMixin.js":9,"../util/existy.js":18,"../util/extendObject.js":19,"../util/isArray.js":20,"../util/isFunction.js":21}],18:[function(require,module,exports){
 'use strict';
 
 function existy(x) { return (x !== null) && (x !== undefined); }
 
 module.exports = existy;
-},{}],18:[function(require,module,exports){
+},{}],19:[function(require,module,exports){
 'use strict';
 
 // Extend a given object with all the properties (and their values) found in the passed-in object(s).
@@ -1544,7 +1598,7 @@ var extendObject = function(obj /*, extendObject1, extendObject2, ..., extendObj
 };
 
 module.exports = extendObject;
-},{}],19:[function(require,module,exports){
+},{}],20:[function(require,module,exports){
 'use strict';
 
 var genericObjType = function(){},
@@ -1555,7 +1609,7 @@ function isArray(obj) {
 }
 
 module.exports = isArray;
-},{}],20:[function(require,module,exports){
+},{}],21:[function(require,module,exports){
 'use strict';
 
 var genericObjType = function(){},
@@ -1572,7 +1626,7 @@ if (isFunction(/x/)) {
 }
 
 module.exports = isFunction;
-},{}],21:[function(require,module,exports){
+},{}],22:[function(require,module,exports){
 'use strict';
 
 var genericObjType = function(){},
@@ -1584,7 +1638,7 @@ function isNumber(value) {
 }
 
 module.exports = isNumber;
-},{}],22:[function(require,module,exports){
+},{}],23:[function(require,module,exports){
 'use strict';
 
 var genericObjType = function(){},
@@ -1596,7 +1650,7 @@ var isString = function isString(value) {
 };
 
 module.exports = isString;
-},{}],23:[function(require,module,exports){
+},{}],24:[function(require,module,exports){
 'use strict';
 
 var existy = require('./existy.js');
@@ -1608,7 +1662,7 @@ var existy = require('./existy.js');
 function truthy(x) { return (x !== false) && existy(x); }
 
 module.exports = truthy;
-},{"./existy.js":17}],24:[function(require,module,exports){
+},{"./existy.js":18}],25:[function(require,module,exports){
 'use strict';
 
 // TODO: Refactor to separate js files & modules & remove from here.
@@ -1727,4 +1781,4 @@ xmlfun.preApplyArgsFn = preApplyArgsFn;
 xmlfun.getInheritableElement = getInheritableElement;
 
 module.exports = xmlfun;
-},{"./util/existy.js":17,"./util/isFunction.js":20,"./util/isString.js":22}]},{},[11]);
+},{"./util/existy.js":18,"./util/isFunction.js":21,"./util/isString.js":23}]},{},[11]);
