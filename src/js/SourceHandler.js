@@ -4,6 +4,8 @@ var MediaSource = require('global/window').MediaSource,
     ManifestController = require('./manifest/ManifestController.js'),
     PlaylistLoader = require('./PlaylistLoader.js');
 
+// TODO: DISPOSE METHOD
+
 function SourceHandler(source, tech) {
     var self = this,
         manifestController = new ManifestController(source.src, false);

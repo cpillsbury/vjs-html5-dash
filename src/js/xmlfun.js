@@ -2,33 +2,9 @@
 
 // TODO: Refactor to separate js files & modules & remove from here.
 
-// NOTE: TAKEN FROM LODASH TO REMOVE DEPENDENCY
-/** `Object#toString` result shortcuts */
-var funcClass = '[object Function]',
-    stringClass = '[object String]';
-
-/** Used to resolve the internal [[Class]] of values */
-var toString = Object.prototype.toString;
-
-var isFunction = function isFunction(value) {
-    return typeof value === 'function';
-};
-// fallback for older versions of Chrome and Safari
-if (isFunction(/x/)) {
-    isFunction = function(value) {
-        return typeof value === 'function' && toString.call(value) === funcClass;
-    };
-}
-
-var isString = function isString(value) {
-    return typeof value === 'string' ||
-        value && typeof value === 'object' && toString.call(value) === stringClass || false;
-};
-
-// NOTE: END OF LODASH-BASED CODE
-
-// General Utility Functions
-function existy(x) { return x !== null; }
+var existy = require('./util/existy.js'),
+    isFunction = require('./util/isFunction.js'),
+    isString = require('./util/isString.js');
 
 // NOTE: This version of truthy allows more values to count
 // as "true" than standard JS Boolean operator comparisons.

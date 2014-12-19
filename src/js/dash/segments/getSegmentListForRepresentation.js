@@ -1,6 +1,7 @@
 'use strict';
 
-var xmlfun = require('../../xmlfun.js'),
+var existy = require('../../util/existy.js'),
+    xmlfun = require('../../xmlfun.js'),
     parseMediaPresentationDuration = require('../mpd/util.js').parseMediaPresentationDuration,
     segmentTemplate = require('./segmentTemplate'),
     createSegmentListFromTemplate,
@@ -8,6 +9,8 @@ var xmlfun = require('../../xmlfun.js'),
     createSegmentFromTemplateByTime,
     getType,
     getBandwidth,
+    getWidth,
+    getHeight,
     getTotalDurationFromTemplate,
     getSegmentDurationFromTemplate,
     getTotalSegmentCountFromTemplate,
@@ -30,7 +33,18 @@ getType = function(representation) {
 };
 
 getBandwidth = function(representation) {
-    return Number(representation.getBandwidth());
+    var bandwidth = representation.getBandwidth();
+    return existy(bandwidth) ? Number(bandwidth) : undefined;
+};
+
+getWidth = function(representation) {
+    var width = representation.getWidth();
+    return existy(width) ? Number(width) : undefined;
+};
+
+getHeight = function(representation) {
+    var height = representation.getHeight();
+    return existy(height) ? Number(height) : undefined;
 };
 
 getTotalDurationFromTemplate = function(representation) {
@@ -62,6 +76,8 @@ createSegmentListFromTemplate = function(representation) {
     return {
         getType: xmlfun.preApplyArgsFn(getType, representation),
         getBandwidth: xmlfun.preApplyArgsFn(getBandwidth, representation),
+        getHeight: xmlfun.preApplyArgsFn(getHeight, representation),
+        getWidth: xmlfun.preApplyArgsFn(getWidth, representation),
         getTotalDuration: xmlfun.preApplyArgsFn(getTotalDurationFromTemplate, representation),
         getSegmentDuration: xmlfun.preApplyArgsFn(getSegmentDurationFromTemplate, representation),
         getTotalSegmentCount: xmlfun.preApplyArgsFn(getTotalSegmentCountFromTemplate, representation),
@@ -107,7 +123,7 @@ createSegmentFromTemplateByNumber = function(representation, number) {
             precisionMultiplier;
 
         if (getEndNumberFromTemplate(representation) === number) {
-            mediaPresentationTime = Number(representation.getMpd().getMediaPresentationTime());
+            mediaPresentationTime = Number(getTotalDurationFromTemplate(representation));
             // Handle floating point precision issue
             precisionMultiplier = 1000;
             duration = (((mediaPresentationTime * precisionMultiplier) % (standardSegmentDuration * precisionMultiplier)) / precisionMultiplier );
@@ -124,8 +140,6 @@ createSegmentFromTemplateByTime = function(representation, seconds) {
     var segmentDuration = getSegmentDurationFromTemplate(representation),
         number = Math.floor(seconds / segmentDuration),
         segment = createSegmentFromTemplateByNumber(representation, number);
-    // TODO: REMOVE (TESTING PURPOSES ONLY)
-    console.log('Segment Duration: ' + segmentDuration + ', Seconds: ' + seconds + ', Number: ' + number);
     return segment;
 };
 

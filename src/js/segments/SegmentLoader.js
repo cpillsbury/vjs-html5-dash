@@ -9,7 +9,6 @@ var existy = require('../util/existy.js'),
 
 loadSegment = function(segment, callbackFn, retryCount, retryInterval) {
     var self = this;
-    self.__lastDownloadStartTime = Number((new Date().getTime())/1000);
     self.__lastDownloadCompleteTime = null;
 
     var request = new XMLHttpRequest(),
@@ -47,6 +46,7 @@ loadSegment = function(segment, callbackFn, retryCount, retryInterval) {
         return;
     };
 
+    self.__lastDownloadStartTime = Number((new Date().getTime())/1000);
     request.send();
 };
 
@@ -62,7 +62,8 @@ function SegmentLoader(manifestController, mediaType) {
 
 SegmentLoader.prototype.eventList = {
     INITIALIZATION_LOADED: 'initializationLoaded',
-    SEGMENT_LOADED: 'segmentLoaded'
+    SEGMENT_LOADED: 'segmentLoaded',
+    DOWNLOAD_DATA_UPDATE: 'downloadDataUpdate'
 };
 
 SegmentLoader.prototype.__getMediaSet = function getMediaSet() {
@@ -157,11 +158,14 @@ SegmentLoader.prototype.loadNextSegment = function() {
 
 // TODO: Duplicate code below. Abstract away.
 SegmentLoader.prototype.loadSegmentAtNumber = function(number) {
-    var self = this;
+    var self = this,
+        segmentList = this.getCurrentSegmentList();
+
+    console.log('BANDWIDTH OF SEGMENT BEING REQUESTED: ' + segmentList.getBandwidth());
 
     if (number > this.getEndNumber()) { return false; }
 
-    var segment = this.getCurrentSegmentList().getSegmentByNumber(number);
+    var segment = segmentList.getSegmentByNumber(number);
 
     if (this.__currentBandwidthChanged) {
         this.one(this.eventList.INITIALIZATION_LOADED, function(event) {
@@ -176,6 +180,17 @@ SegmentLoader.prototype.loadSegmentAtNumber = function(number) {
         this.loadInitialization();
     } else {
         loadSegment.call(self, segment, function(response) {
+            self.trigger(
+                {
+                    type:self.eventList.DOWNLOAD_DATA_UPDATE,
+                    target: self,
+                    data: {
+                        rtt: self.getLastDownloadRoundTripTimeSpan(),
+                        playbackTime: segment.getDuration(),
+                        bandwidth: segmentList.getBandwidth()
+                    }
+                }
+            );
             var segmentData = new Uint8Array(response);
             self.__currentSegmentNumber = segment.getNumber();
             self.trigger({ type:self.eventList.SEGMENT_LOADED, target:self, data:segmentData });
@@ -188,6 +203,8 @@ SegmentLoader.prototype.loadSegmentAtNumber = function(number) {
 SegmentLoader.prototype.loadSegmentAtTime = function(presentationTime) {
     var self = this,
         segmentList = this.getCurrentSegmentList();
+
+    console.log('BANDWIDTH OF SEGMENT BEING REQUESTED: ' + segmentList.getBandwidth());
 
     if (presentationTime > segmentList.getTotalDuration()) { return false; }
 
@@ -206,6 +223,17 @@ SegmentLoader.prototype.loadSegmentAtTime = function(presentationTime) {
         this.loadInitialization();
     } else {
         loadSegment.call(self, segment, function(response) {
+            self.trigger(
+                {
+                    type:self.eventList.DOWNLOAD_DATA_UPDATE,
+                    target: self,
+                    data: {
+                        rtt: self.getLastDownloadRoundTripTimeSpan(),
+                        playbackTime: segment.getDuration(),
+                        bandwidth: segmentList.getBandwidth()
+                    }
+                }
+            );
             var segmentData = new Uint8Array(response);
             self.__currentSegmentNumber = segment.getNumber();
             self.trigger({ type:self.eventList.SEGMENT_LOADED, target:self, data:segmentData });
