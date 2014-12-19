@@ -50,9 +50,9 @@ getHeight = function(representation) {
 getTotalDurationFromTemplate = function(representation) {
     // TODO: Support period-relative presentation time
     var mediaPresentationDuration = representation.getMpd().getMediaPresentationDuration(),
-        parsedMediaPresentationDuration = Number(parseMediaPresentationDuration(mediaPresentationDuration)),
+        parsedMediaPresentationDuration = existy(mediaPresentationDuration) ? Number(parseMediaPresentationDuration(mediaPresentationDuration)) : Number.NaN,
         presentationTimeOffset = Number(representation.getSegmentTemplate().getPresentationTimeOffset());
-    return Number(parsedMediaPresentationDuration - presentationTimeOffset);
+    return existy(parsedMediaPresentationDuration) ? Number(parsedMediaPresentationDuration - presentationTimeOffset) : Number.NaN;
 };
 
 getSegmentDurationFromTemplate = function(representation) {
@@ -91,6 +91,8 @@ createSegmentListFromTemplate = function(representation) {
                     representationId = representation.getId(),
                     initializationRelativeUrlTemplate = representation.getSegmentTemplate().getInitialization(),
                     initializationRelativeUrl = segmentTemplate.replaceIDForTemplate(initializationRelativeUrlTemplate, representationId);
+
+                initializationRelativeUrl = segmentTemplate.replaceTokenForTemplate(initializationRelativeUrl, 'Bandwidth', representation.getBandwidth());
                 return baseUrl + initializationRelativeUrl;
             };
             return initialization;
@@ -106,11 +108,14 @@ createSegmentFromTemplateByNumber = function(representation, number) {
         var baseUrl = representation.getBaseUrl(),
             segmentRelativeUrlTemplate = representation.getSegmentTemplate().getMedia(),
             replacedIdUrl = segmentTemplate.replaceIDForTemplate(segmentRelativeUrlTemplate, representation.getId()),
+            replacedTokensUrl;
             // TODO: Since $Time$-templated segment URLs should only exist in conjunction w/a <SegmentTimeline>,
             // TODO: can currently assume a $Number$-based templated url.
             // TODO: Enforce min/max number range (based on segmentList startNumber & endNumber)
-            replacedNumberUrl = segmentTemplate.replaceTokenForTemplate(replacedIdUrl, 'Number', number);
-        return baseUrl + replacedNumberUrl;
+        replacedTokensUrl = segmentTemplate.replaceTokenForTemplate(replacedIdUrl, 'Number', number);
+        replacedTokensUrl = segmentTemplate.replaceTokenForTemplate(replacedTokensUrl, 'Bandwidth', representation.getBandwidth());
+
+        return baseUrl + replacedTokensUrl;
     };
     segment.getStartTime = function() {
         return number * getSegmentDurationFromTemplate(representation);

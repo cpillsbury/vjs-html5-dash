@@ -30,7 +30,8 @@ function MediaTypeLoader(segmentLoader, sourceBufferDataQueue, mediaType, tech) 
 }
 
 MediaTypeLoader.prototype.eventList = {
-    RECHECK_SEGMENT_LOADING: 'recheckSegmentLoading'
+    RECHECK_SEGMENT_LOADING: 'recheckSegmentLoading',
+    RECHECK_CURRENT_SEGMENT_LIST: 'recheckCurrentSegmentList',
 };
 
 MediaTypeLoader.prototype.getMediaType = function() { return this.__mediaType; };
@@ -42,6 +43,7 @@ MediaTypeLoader.prototype.getSourceBufferDataQueue = function() { return this.__
 MediaTypeLoader.prototype.startLoadingSegments = function() {
     var self = this;
     this.__recheckSegmentLoadingHandler = function(event) {
+        self.trigger({ type:self.eventList.RECHECK_CURRENT_SEGMENT_LIST, target:self });
         self.__checkSegmentLoading(MIN_DESIRED_BUFFER_SIZE, MAX_DESIRED_BUFFER_SIZE);
     };
 
@@ -195,8 +197,7 @@ function PlaylistLoader(manifestController, mediaSource, tech) {
             currentSegmentListBandwidth = segmentLoader.getCurrentSegmentList().getBandwidth(),
             mediaType = mediaTypeLoader.getMediaType();
 
-        // TODO: Currently an event add order dependency. Refactor MediaTypeLoader & PlaylistLoader to change this?
-        mediaTypeLoader.on(mediaTypeLoader.eventList.RECHECK_SEGMENT_LOADING, function(event) {
+        mediaTypeLoader.on(mediaTypeLoader.eventList.RECHECK_CURRENT_SEGMENT_LIST, function(event) {
             var mediaSet = manifestController.getMediaSetByType(mediaType),
                 isFullscreen = tech.player().isFullscreen(),
                 data = {},
@@ -579,9 +580,9 @@ getHeight = function(representation) {
 getTotalDurationFromTemplate = function(representation) {
     // TODO: Support period-relative presentation time
     var mediaPresentationDuration = representation.getMpd().getMediaPresentationDuration(),
-        parsedMediaPresentationDuration = Number(parseMediaPresentationDuration(mediaPresentationDuration)),
+        parsedMediaPresentationDuration = existy(mediaPresentationDuration) ? Number(parseMediaPresentationDuration(mediaPresentationDuration)) : Number.NaN,
         presentationTimeOffset = Number(representation.getSegmentTemplate().getPresentationTimeOffset());
-    return Number(parsedMediaPresentationDuration - presentationTimeOffset);
+    return existy(parsedMediaPresentationDuration) ? Number(parsedMediaPresentationDuration - presentationTimeOffset) : Number.NaN;
 };
 
 getSegmentDurationFromTemplate = function(representation) {
@@ -620,6 +621,8 @@ createSegmentListFromTemplate = function(representation) {
                     representationId = representation.getId(),
                     initializationRelativeUrlTemplate = representation.getSegmentTemplate().getInitialization(),
                     initializationRelativeUrl = segmentTemplate.replaceIDForTemplate(initializationRelativeUrlTemplate, representationId);
+
+                initializationRelativeUrl = segmentTemplate.replaceTokenForTemplate(initializationRelativeUrl, 'Bandwidth', representation.getBandwidth());
                 return baseUrl + initializationRelativeUrl;
             };
             return initialization;
@@ -635,11 +638,14 @@ createSegmentFromTemplateByNumber = function(representation, number) {
         var baseUrl = representation.getBaseUrl(),
             segmentRelativeUrlTemplate = representation.getSegmentTemplate().getMedia(),
             replacedIdUrl = segmentTemplate.replaceIDForTemplate(segmentRelativeUrlTemplate, representation.getId()),
+            replacedTokensUrl;
             // TODO: Since $Time$-templated segment URLs should only exist in conjunction w/a <SegmentTimeline>,
             // TODO: can currently assume a $Number$-based templated url.
             // TODO: Enforce min/max number range (based on segmentList startNumber & endNumber)
-            replacedNumberUrl = segmentTemplate.replaceTokenForTemplate(replacedIdUrl, 'Number', number);
-        return baseUrl + replacedNumberUrl;
+        replacedTokensUrl = segmentTemplate.replaceTokenForTemplate(replacedIdUrl, 'Number', number);
+        replacedTokensUrl = segmentTemplate.replaceTokenForTemplate(replacedTokensUrl, 'Bandwidth', representation.getBandwidth());
+
+        return baseUrl + replacedTokensUrl;
     };
     segment.getStartTime = function() {
         return number * getSegmentDurationFromTemplate(representation);

@@ -16,7 +16,8 @@ function MediaTypeLoader(segmentLoader, sourceBufferDataQueue, mediaType, tech) 
 }
 
 MediaTypeLoader.prototype.eventList = {
-    RECHECK_SEGMENT_LOADING: 'recheckSegmentLoading'
+    RECHECK_SEGMENT_LOADING: 'recheckSegmentLoading',
+    RECHECK_CURRENT_SEGMENT_LIST: 'recheckCurrentSegmentList',
 };
 
 MediaTypeLoader.prototype.getMediaType = function() { return this.__mediaType; };
@@ -28,6 +29,7 @@ MediaTypeLoader.prototype.getSourceBufferDataQueue = function() { return this.__
 MediaTypeLoader.prototype.startLoadingSegments = function() {
     var self = this;
     this.__recheckSegmentLoadingHandler = function(event) {
+        self.trigger({ type:self.eventList.RECHECK_CURRENT_SEGMENT_LIST, target:self });
         self.__checkSegmentLoading(MIN_DESIRED_BUFFER_SIZE, MAX_DESIRED_BUFFER_SIZE);
     };
 

@@ -40,8 +40,7 @@ function PlaylistLoader(manifestController, mediaSource, tech) {
             currentSegmentListBandwidth = segmentLoader.getCurrentSegmentList().getBandwidth(),
             mediaType = mediaTypeLoader.getMediaType();
 
-        // TODO: Currently an event add order dependency. Refactor MediaTypeLoader & PlaylistLoader to change this?
-        mediaTypeLoader.on(mediaTypeLoader.eventList.RECHECK_SEGMENT_LOADING, function(event) {
+        mediaTypeLoader.on(mediaTypeLoader.eventList.RECHECK_CURRENT_SEGMENT_LIST, function(event) {
             var mediaSet = manifestController.getMediaSetByType(mediaType),
                 isFullscreen = tech.player().isFullscreen(),
                 data = {},
