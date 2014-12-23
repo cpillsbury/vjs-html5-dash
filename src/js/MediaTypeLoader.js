@@ -9,7 +9,6 @@ var existy = require('./util/existy.js'),
     MIN_DESIRED_BUFFER_SIZE = 20,
     MAX_DESIRED_BUFFER_SIZE = 40;
 
-// TODO: Rename object type (MediaTypeLoader?)
 function MediaTypeLoader(segmentLoader, sourceBufferDataQueue, mediaType, tech) {
     this.__segmentLoader = segmentLoader;
     this.__sourceBufferDataQueue = sourceBufferDataQueue;
