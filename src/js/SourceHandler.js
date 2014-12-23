@@ -5,7 +5,15 @@ var MediaSource = require('global/window').MediaSource,
     PlaylistLoader = require('./PlaylistLoader.js');
 
 // TODO: DISPOSE METHOD
-
+/**
+ *
+ * Class that defines the root context for handling a specific MPEG-DASH media source.
+ *
+ * @param source    video.js source object providing information about the source, such as the uri (src) and the type (type)
+ * @param tech      video.js Html5 tech object providing the point of interaction between the SourceHandler instance and
+ *                  the video.js library (including e.g. the video element)
+ * @constructor
+ */
 function SourceHandler(source, tech) {
     var self = this,
         manifestController = new ManifestController(source.src, false);
