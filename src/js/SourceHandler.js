@@ -18,7 +18,7 @@ function SourceHandler(source, tech) {
     var self = this,
         manifestController = new ManifestController(source.src, false);
 
-    manifestController.load(function(manifest) {
+    manifestController.one(manifestController.eventList.MANIFEST_LOADED, function(event) {
         var mediaSource = new MediaSource(),
             openListener = function(event) {
                 mediaSource.removeEventListener('sourceopen', openListener, false);
@@ -33,6 +33,8 @@ function SourceHandler(source, tech) {
 
         tech.setSrc(URL.createObjectURL(mediaSource));
     });
+
+    manifestController.load();
 }
 
 module.exports = SourceHandler;

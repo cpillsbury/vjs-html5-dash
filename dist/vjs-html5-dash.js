@@ -18,10 +18,19 @@ var existy = require('./util/existy.js'),
     isFunction = require('./util/isFunction.js'),
     extendObject = require('./util/extendObject.js'),
     EventDispatcherMixin = require('./events/EventDispatcherMixin.js'),
+    // TODO: Determine appropriate default size (or base on segment n x size/duration?)
+    // Must consider ABR Switching & Viewing experience of already-buffered segments.
     MIN_DESIRED_BUFFER_SIZE = 20,
     MAX_DESIRED_BUFFER_SIZE = 40;
 
-// TODO: Rename object type (MediaTypeLoader?)
+/**
+ *
+ * @param segmentLoader
+ * @param sourceBufferDataQueue
+ * @param mediaType
+ * @param tech
+ * @constructor
+ */
 function MediaTypeLoader(segmentLoader, sourceBufferDataQueue, mediaType, tech) {
     this.__segmentLoader = segmentLoader;
     this.__sourceBufferDataQueue = sourceBufferDataQueue;
@@ -31,7 +40,7 @@ function MediaTypeLoader(segmentLoader, sourceBufferDataQueue, mediaType, tech) 
 
 MediaTypeLoader.prototype.eventList = {
     RECHECK_SEGMENT_LOADING: 'recheckSegmentLoading',
-    RECHECK_CURRENT_SEGMENT_LIST: 'recheckCurrentSegmentList',
+    RECHECK_CURRENT_SEGMENT_LIST: 'recheckCurrentSegmentList'
 };
 
 MediaTypeLoader.prototype.getMediaType = function() { return this.__mediaType; };
@@ -178,6 +187,15 @@ function createMediaTypeLoaderForType(manifestController, mediaSource, mediaType
     return new MediaTypeLoader(segmentLoader, sourceBufferDataQueue, mediaType, tech);
 }
 
+/**
+ *
+ * Factory-style function for creating a set of MediaTypeLoaders based on what's defined in the manifest and what media types are supported.
+ *
+ * @param manifestController {ManifestController}   controller that provides data views for the ABR playlist manifest data
+ * @param mediaSource {MediaSource}                 MSE MediaSource instance corresponding to the current ABR playlist
+ * @param tech {object}                             video.js Html5 tech object instance
+ * @returns {Array.<MediaTypeLoader>}               Set of MediaTypeLoaders for loading segments for a given media type (e.g. audio or video)
+ */
 function createMediaTypeLoaders(manifestController, mediaSource, tech) {
     var matchedTypes = mediaTypes.filter(function(mediaType) {
             var exists = existy(manifestController.getMediaSetByType(mediaType));
@@ -186,10 +204,22 @@ function createMediaTypeLoaders(manifestController, mediaSource, tech) {
     return mediaTypeLoaders;
 }
 
+/**
+ *
+ * PlaylistLoader handles the top-level loading and playback of segments for all media types (e.g. both audio and video).
+ * This includes checking if it should switch segment lists, updating/retrieving data relevant to these decision for
+ * each media type. It also includes changing the playback rate of the video based on data available in the source buffer.
+ *
+ * @param manifestController {ManifestController}   controller that provides data views for the ABR playlist manifest data
+ * @param mediaSource {MediaSource}                 MSE MediaSource instance corresponding to the current ABR playlist
+ * @param tech {object}                             video.js Html5 tech object instance
+ * @constructor
+ */
 function PlaylistLoader(manifestController, mediaSource, tech) {
     this.__tech = tech;
     this.__mediaTypeLoaders = createMediaTypeLoaders(manifestController, mediaSource, tech);
 
+    // For each of the media types (e.g. 'audio' & 'video') in the ABR manifest...
     this.__mediaTypeLoaders.forEach(function(mediaTypeLoader) {
         // MediaSet-specific variables
         var segmentLoader = mediaTypeLoader.getSegmentLoader(),
@@ -197,6 +227,7 @@ function PlaylistLoader(manifestController, mediaSource, tech) {
             currentSegmentListBandwidth = segmentLoader.getCurrentSegmentList().getBandwidth(),
             mediaType = mediaTypeLoader.getMediaType();
 
+        // Listen for event telling us to recheck which segment list the segments should be loaded from.
         mediaTypeLoader.on(mediaTypeLoader.eventList.RECHECK_CURRENT_SEGMENT_LIST, function(event) {
             var mediaSet = manifestController.getMediaSetByType(mediaType),
                 isFullscreen = tech.player().isFullscreen(),
@@ -205,23 +236,32 @@ function PlaylistLoader(manifestController, mediaSource, tech) {
 
             data.downloadRateRatio = downloadRateRatio;
             data.currentSegmentListBandwidth = currentSegmentListBandwidth;
+
+            // Rather than monitoring events/updating state, simply get relevant video viewport dims on the fly as needed.
             data.width = isFullscreen ? window.screen.width : tech.player().width();
             data.height = isFullscreen ? window.screen.height : tech.player().height();
 
             selectedSegmentList = selectSegmentList(mediaSet, data);
 
             // TODO: Should we refactor to set based on segmentList instead?
+            // (Potentially) update which segment list the segments should be loaded from (based on segment list's bandwidth/bitrate)
             segmentLoader.setCurrentBandwidth(selectedSegmentList.getBandwidth());
         });
 
+        // Update the download rate (round trip time to download a segment of a given average bandwidth/bitrate) to use
+        // with choosing which stream variant to load segments from.
         segmentLoader.on(segmentLoader.eventList.DOWNLOAD_DATA_UPDATE, function(event) {
             downloadRateRatio = event.data.playbackTime / event.data.rtt;
             currentSegmentListBandwidth = event.data.bandwidth;
         });
 
+        // Kickoff segment loading for the media type.
         mediaTypeLoader.startLoadingSegments();
     });
 
+    // NOTE: This code block handles pseudo-'pausing'/'unpausing' (changing the playbackRate) based on whether or not
+    // there is data available in the buffer, but indirectly, by listening to a few events and using the video element's
+    // ready state.
     var changePlaybackRateEvents = ['seeking', 'canplay', 'canplaythrough'];
     changePlaybackRateEvents.forEach(function(eventType) {
         tech.on(eventType, function(event) {
@@ -241,12 +281,20 @@ var MediaSource = require('global/window').MediaSource,
     PlaylistLoader = require('./PlaylistLoader.js');
 
 // TODO: DISPOSE METHOD
-
+/**
+ *
+ * Class that defines the root context for handling a specific MPEG-DASH media source.
+ *
+ * @param source    video.js source object providing information about the source, such as the uri (src) and the type (type)
+ * @param tech      video.js Html5 tech object providing the point of interaction between the SourceHandler instance and
+ *                  the video.js library (including e.g. the video element)
+ * @constructor
+ */
 function SourceHandler(source, tech) {
     var self = this,
         manifestController = new ManifestController(source.src, false);
 
-    manifestController.load(function(manifest) {
+    manifestController.one(manifestController.eventList.MANIFEST_LOADED, function(event) {
         var mediaSource = new MediaSource(),
             openListener = function(event) {
                 mediaSource.removeEventListener('sourceopen', openListener, false);
@@ -261,6 +309,8 @@ function SourceHandler(source, tech) {
 
         tech.setSrc(URL.createObjectURL(mediaSource));
     });
+
+    manifestController.load();
 }
 
 module.exports = SourceHandler;
@@ -818,51 +868,70 @@ module.exports = eventManager;
 
 },{"global/window":1}],11:[function(require,module,exports){
 /**
- * Created by cpillsbury on 12/3/14.
+ *
+ * main source for packaged code. Auto-bootstraps the source handling functionality by registering the source handler
+ * with video.js on initial script load via IIFE. (NOTE: This places an order dependency on the video.js library, which
+ * must already be loaded before this script auto-executes.)
+ *
  */
 ;(function() {
     'use strict';
 
     var root = require('global/window'),
         videojs = root.videojs,
-        SourceHandler = require('./SourceHandler');
+        SourceHandler = require('./SourceHandler'),
+        CanHandleSourceEnum = {
+            DOESNT_HANDLE_SOURCE: '',
+            MAYBE_HANDLE_SOURCE: 'maybe'
+        };
 
     if (!videojs) {
         throw new Error('The video.js library must be included to use this MPEG-DASH source handler.');
     }
 
+    /**
+     *
+     * Used by a video.js tech instance to verify whether or not a specific media source can be handled by this
+     * source handler. In this case, should return 'maybe' if the source is MPEG-DASH, otherwise '' (representing no).
+     *
+     * @param {object} source           video.js source object providing source uri and type information
+     * @returns {CanHandleSourceEnum}   string representation of whether or not particular source can be handled by this
+     *                                  source handler.
+     */
     function canHandleSource(source) {
-        // Externalize if used elsewhere. Potentially use constant function.
-        var doesntHandleSource = '',
-            maybeHandleSource = 'maybe',
-            defaultHandleSource = doesntHandleSource;
-
-        // TODO: Use safer vjs check (e.g. handles IE conditions)?
         // Requires Media Source Extensions
         if (!(root.MediaSource)) {
-            return doesntHandleSource;
+            return CanHandleSourceEnum.DOESNT_HANDLE_SOURCE;
         }
 
         // Check if the type is supported
         if (/application\/dash\+xml/.test(source.type)) {
-            console.log('matched type');
-            return maybeHandleSource;
+            return CanHandleSourceEnum.MAYBE_HANDLE_SOURCE;
         }
 
         // Check if the file extension matches
         if (/\.mpd$/i.test(source.src)) {
-            console.log('matched extension');
-            return maybeHandleSource;
+            return CanHandleSourceEnum.MAYBE_HANDLE_SOURCE;
         }
 
-        return defaultHandleSource;
+        return CanHandleSourceEnum.DOESNT_HANDLE_SOURCE;
     }
 
+    /**
+     *
+     * Called by a video.js tech instance to handle a specific media source, returning an object instance that provides
+     * the context for handling said source.
+     *
+     * @param source            video.js source object providing source uri and type information
+     * @param tech              video.js tech object (in this case, should be Html5 tech) providing point of interaction
+     *                          between the source handler and the video.js library (including, e.g., the video element)
+     * @returns {SourceHandler} An object that defines context for handling a particular MPEG-DASH source.
+     */
     function handleSource(source, tech) {
         return new SourceHandler(source, tech);
     }
 
-    // Register the source handler
+    // Register the source handler to the Html5 tech instance.
     videojs.Html5.registerSourceHandler({
         canHandleSource: canHandleSource,
         handleSource: handleSource
@@ -887,8 +956,17 @@ var existy = require('../util/existy.js'),
     mediaTypes = require('./MediaTypes.js'),
     DEFAULT_TYPE = mediaTypes[0];
 
+/**
+ *
+ * Function used to get the media type based on the mime type. Used to determine the media type of Adaptation Sets
+ * or corresponding data representations.
+ *
+ * @param mimeType {string} mime type for a DASH MPD Adaptation Set (specified as an attribute string)
+ * @param types {string}    supported media types (e.g. 'video,' 'audio,')
+ * @returns {string}        the media type that corresponds to the mime type.
+ */
 getMediaTypeFromMimeType = function(mimeType, types) {
-    if (!isString(mimeType)) { return DEFAULT_TYPE; }
+    if (!isString(mimeType)) { return DEFAULT_TYPE; }   // TODO: Throw error?
     var matchedType = types.find(function(type) {
         return (!!mimeType && mimeType.indexOf(type) >= 0);
     });
@@ -896,7 +974,15 @@ getMediaTypeFromMimeType = function(mimeType, types) {
     return existy(matchedType) ? matchedType : DEFAULT_TYPE;
 };
 
-// TODO: Move to own module in dash package somewhere
+/**
+ *
+ * Function used to get the 'type' of a DASH Representation in a format expected by the MSE SourceBuffer. Used to
+ * create SourceBuffer instances that correspond to a given MediaSet (e.g. set of audio stream variants, video stream
+ * variants, etc.).
+ *
+ * @param representation    POJO DASH MPD Representation
+ * @returns {string}        The Representation's 'type' in a format expected by the MSE SourceBuffer
+ */
 getSourceBufferTypeFromRepresentation = function(representation) {
     var codecStr = representation.getCodecs();
     var typeStr = representation.getMimeType();
@@ -912,22 +998,32 @@ getSourceBufferTypeFromRepresentation = function(representation) {
     return (typeStr + ';codecs="' + processedCodecStr + '"');
 };
 
-
-function Manifest(sourceUri, autoLoad) {
+/**
+ *
+ * The ManifestController loads, stores, and provides data views for the MPD manifest that represents the
+ * MPEG-DASH media source being handled.
+ *
+ * @param sourceUri {string}
+ * @param autoLoad  {boolean}
+ * @constructor
+ */
+function ManifestController(sourceUri, autoLoad) {
     this.__autoLoad = truthy(autoLoad);
     this.setSourceUri(sourceUri);
 }
 
-Manifest.prototype.eventList = {
+/**
+ * Enumeration of events instances of this object will dispatch.
+ */
+ManifestController.prototype.eventList = {
     MANIFEST_LOADED: 'manifestLoaded'
 };
 
-
-Manifest.prototype.getSourceUri = function() {
+ManifestController.prototype.getSourceUri = function() {
     return this.__sourceUri;
 };
 
-Manifest.prototype.setSourceUri = function setSourceUri(sourceUri) {
+ManifestController.prototype.setSourceUri = function setSourceUri(sourceUri) {
     // TODO: 'existy()' check for both?
     if (sourceUri === this.__sourceUri) { return; }
 
@@ -937,47 +1033,93 @@ Manifest.prototype.setSourceUri = function setSourceUri(sourceUri) {
         return;
     }
 
+    // Need to potentially remove update interval for re-requesting the MPD manifest (in case it is a dynamic MPD)
     this.__clearCurrentUpdateInterval();
     this.__sourceUri = sourceUri;
+    // If we should automatically load the MPD, go ahead and kick off loading it.
     if (this.__autoLoad) {
         // TODO: Impl any cleanup functionality appropriate before load.
         this.load();
     }
 };
 
-Manifest.prototype.__clearSourceUri = function clearSourceUri() {
+ManifestController.prototype.__clearSourceUri = function clearSourceUri() {
     this.__sourceUri = null;
+    // Need to potentially remove update interval for re-requesting the MPD manifest (in case it is a dynamic MPD)
     this.__clearCurrentUpdateInterval();
     // TODO: impl any other cleanup functionality
 };
 
-Manifest.prototype.load = function load(/* optional */ callbackFn) {
+/**
+ * Kick off loading the DASH MPD Manifest (served @ the ManifestController instance's __sourceUri)
+ */
+ManifestController.prototype.load = function load() {
     var self = this;
     loadManifest(self.__sourceUri, function(data) {
         self.__manifest = data.manifestXml;
+        // (Potentially) setup the update interval for re-requesting the MPD (in case the manifest is dynamic)
         self.__setupUpdateInterval();
+        // Dispatch event to notify that the manifest has loaded.
         self.trigger({ type:self.eventList.MANIFEST_LOADED, target:self, data:self.__manifest});
-        if (isFunction(callbackFn)) { callbackFn(data.manifestXml); }
     });
 };
 
-Manifest.prototype.__clearCurrentUpdateInterval = function clearCurrentUpdateInterval() {
+/**
+ * 'Private' method that removes the update interval (if it exists), so the ManifestController instance will no longer
+ * periodically re-request the manifest (if it's dynamic).
+ */
+ManifestController.prototype.__clearCurrentUpdateInterval = function clearCurrentUpdateInterval() {
     if (!existy(this.__updateInterval)) { return; }
     clearInterval(this.__updateInterval);
 };
 
-Manifest.prototype.__setupUpdateInterval = function setupUpdateInterval() {
+/**
+ * Sets up an interval to re-request the manifest (if it's dynamic)
+ */
+ManifestController.prototype.__setupUpdateInterval = function setupUpdateInterval() {
+    // If there's already an updateInterval function, remove it.
     if (this.__updateInterval) { self.__clearCurrentUpdateInterval(); }
+    // If we shouldn't update, just bail.
     if (!this.getShouldUpdate()) { return; }
     var self = this,
         minUpdateRate = 2,
         updateRate = Math.max(this.getUpdateRate(), minUpdateRate);
+    // Setup the update interval based on the update rate (determined from the manifest) or the minimum update rate
+    // (whichever's larger).
+    // NOTE: Must store ref to created interval to potentially clear/remove it later
     this.__updateInterval = setInterval(function() {
         self.load();
-    }, updateRate);
+    }, updateRate * 1000);
 };
 
-Manifest.prototype.getMediaSetByType = function getMediaSetByType(type) {
+/**
+ * Gets the type of playlist ('static' or 'dynamic', which nearly invariably corresponds to live vs. vod) defined in the
+ * manifest.
+ *
+ * @returns {string}    the playlist type (either 'static' or 'dynamic')
+ */
+ManifestController.prototype.getPlaylistType = function getPlaylistType() {
+    var playlistType = getMpd(this.__manifest).getType();
+    return playlistType;
+};
+
+ManifestController.prototype.getUpdateRate = function getUpdateRate() {
+    var minimumUpdatePeriod = getMpd(this.__manifest).getMinimumUpdatePeriod();
+    return Number(minimumUpdatePeriod);
+};
+
+ManifestController.prototype.getShouldUpdate = function getShouldUpdate() {
+    var isDynamic = (this.getPlaylistType() === 'dynamic'),
+        hasValidUpdateRate = (this.getUpdateRate() > 0);
+    return (isDynamic && hasValidUpdateRate);
+};
+
+/**
+ *
+ * @param type
+ * @returns {MediaSet}
+ */
+ManifestController.prototype.getMediaSetByType = function getMediaSetByType(type) {
     if (mediaTypes.indexOf(type) < 0) { throw new Error('Invalid type. Value must be one of: ' + mediaTypes.join(', ')); }
     var adaptationSets = getMpd(this.__manifest).getPeriods()[0].getAdaptationSets(),
         adaptationSetWithTypeMatch = adaptationSets.find(function(adaptationSet) {
@@ -987,30 +1129,29 @@ Manifest.prototype.getMediaSetByType = function getMediaSetByType(type) {
     return new MediaSet(adaptationSetWithTypeMatch);
 };
 
-Manifest.prototype.getMediaSets = function getMediaSets() {
+/**
+ *
+ * @returns {Array.<MediaSet>}
+ */
+ManifestController.prototype.getMediaSets = function getMediaSets() {
     var adaptationSets = getMpd(this.__manifest).getPeriods()[0].getAdaptationSets(),
         mediaSets = adaptationSets.map(function(adaptationSet) { return new MediaSet(adaptationSet); });
     return mediaSets;
 };
 
-Manifest.prototype.getStreamType = function getStreamType() {
-    var streamType = getMpd(this.__manifest).getType();
-    return streamType;
-};
+// Mixin event handling for the ManifestController object type definition.
+extendObject(ManifestController.prototype, EventDispatcherMixin);
 
-Manifest.prototype.getUpdateRate = function getUpdateRate() {
-    var minimumUpdatePeriod = getMpd(this.__manifest).getMinimumUpdatePeriod();
-    return Number(minimumUpdatePeriod);
-};
-
-Manifest.prototype.getShouldUpdate = function getShouldUpdate() {
-    var isDynamic = (this.getStreamType() === 'dynamic'),
-        hasValidUpdateRate = (this.getUpdateRate() > 0);
-    return (isDynamic && hasValidUpdateRate);
-};
-
-extendObject(Manifest.prototype, EventDispatcherMixin);
-
+// TODO: Move MediaSet definition to a separate .js file?
+/**
+ *
+ * Primary data view for representing the set of segment lists and other general information for a give media type
+ * (e.g. 'audio' or 'video').
+ *
+ * @param adaptationSet The MPEG-DASH correlate for a given media set, containing some way of representating segment lists
+ *                      and a set of representations for each stream variant.
+ * @constructor
+ */
 function MediaSet(adaptationSet) {
     // TODO: Additional checks & Error Throwing
     this.__adaptationSet = adaptationSet;
@@ -1083,6 +1224,7 @@ MediaSet.prototype.getSegmentListEndNumber = function getSegmentListEndNumber() 
     return segmentListEndNumber;
 };
 
+
 MediaSet.prototype.getSegmentLists = function getSegmentLists() {
     var representations = this.__adaptationSet.getRepresentations(),
         segmentLists = representations.map(getSegmentListForRepresentation);
@@ -1110,7 +1252,7 @@ MediaSet.prototype.getAvailableBandwidths = function getAvailableBandwidths() {
     );
 };
 
-module.exports = Manifest;
+module.exports = ManifestController;
 },{"../dash/mpd/getMpd.js":5,"../dash/segments/getSegmentListForRepresentation.js":7,"../events/EventDispatcherMixin.js":9,"../util/existy.js":18,"../util/extendObject.js":19,"../util/isFunction.js":21,"../util/isString.js":23,"../util/truthy.js":24,"./MediaTypes.js":13,"./loadManifest.js":14}],13:[function(require,module,exports){
 module.exports = ['video', 'audio'];
 },{}],14:[function(require,module,exports){
@@ -1130,7 +1272,6 @@ function loadManifest(url, callback) {
     };
 
     try {
-        //this.debug.log('Start loading manifest: ' + url);
         request.onload = onload;
         request.open('GET', url, true);
         request.send();

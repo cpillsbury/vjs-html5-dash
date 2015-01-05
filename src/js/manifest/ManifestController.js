@@ -14,8 +14,17 @@ var existy = require('../util/existy.js'),
     mediaTypes = require('./MediaTypes.js'),
     DEFAULT_TYPE = mediaTypes[0];
 
+/**
+ *
+ * Function used to get the media type based on the mime type. Used to determine the media type of Adaptation Sets
+ * or corresponding data representations.
+ *
+ * @param mimeType {string} mime type for a DASH MPD Adaptation Set (specified as an attribute string)
+ * @param types {string}    supported media types (e.g. 'video,' 'audio,')
+ * @returns {string}        the media type that corresponds to the mime type.
+ */
 getMediaTypeFromMimeType = function(mimeType, types) {
-    if (!isString(mimeType)) { return DEFAULT_TYPE; }
+    if (!isString(mimeType)) { return DEFAULT_TYPE; }   // TODO: Throw error?
     var matchedType = types.find(function(type) {
         return (!!mimeType && mimeType.indexOf(type) >= 0);
     });
@@ -23,7 +32,15 @@ getMediaTypeFromMimeType = function(mimeType, types) {
     return existy(matchedType) ? matchedType : DEFAULT_TYPE;
 };
 
-// TODO: Move to own module in dash package somewhere
+/**
+ *
+ * Function used to get the 'type' of a DASH Representation in a format expected by the MSE SourceBuffer. Used to
+ * create SourceBuffer instances that correspond to a given MediaSet (e.g. set of audio stream variants, video stream
+ * variants, etc.).
+ *
+ * @param representation    POJO DASH MPD Representation
+ * @returns {string}        The Representation's 'type' in a format expected by the MSE SourceBuffer
+ */
 getSourceBufferTypeFromRepresentation = function(representation) {
     var codecStr = representation.getCodecs();
     var typeStr = representation.getMimeType();
@@ -39,22 +56,32 @@ getSourceBufferTypeFromRepresentation = function(representation) {
     return (typeStr + ';codecs="' + processedCodecStr + '"');
 };
 
-
-function Manifest(sourceUri, autoLoad) {
+/**
+ *
+ * The ManifestController loads, stores, and provides data views for the MPD manifest that represents the
+ * MPEG-DASH media source being handled.
+ *
+ * @param sourceUri {string}
+ * @param autoLoad  {boolean}
+ * @constructor
+ */
+function ManifestController(sourceUri, autoLoad) {
     this.__autoLoad = truthy(autoLoad);
     this.setSourceUri(sourceUri);
 }
 
-Manifest.prototype.eventList = {
+/**
+ * Enumeration of events instances of this object will dispatch.
+ */
+ManifestController.prototype.eventList = {
     MANIFEST_LOADED: 'manifestLoaded'
 };
 
-
-Manifest.prototype.getSourceUri = function() {
+ManifestController.prototype.getSourceUri = function() {
     return this.__sourceUri;
 };
 
-Manifest.prototype.setSourceUri = function setSourceUri(sourceUri) {
+ManifestController.prototype.setSourceUri = function setSourceUri(sourceUri) {
     // TODO: 'existy()' check for both?
     if (sourceUri === this.__sourceUri) { return; }
 
@@ -64,47 +91,93 @@ Manifest.prototype.setSourceUri = function setSourceUri(sourceUri) {
         return;
     }
 
+    // Need to potentially remove update interval for re-requesting the MPD manifest (in case it is a dynamic MPD)
     this.__clearCurrentUpdateInterval();
     this.__sourceUri = sourceUri;
+    // If we should automatically load the MPD, go ahead and kick off loading it.
     if (this.__autoLoad) {
         // TODO: Impl any cleanup functionality appropriate before load.
         this.load();
     }
 };
 
-Manifest.prototype.__clearSourceUri = function clearSourceUri() {
+ManifestController.prototype.__clearSourceUri = function clearSourceUri() {
     this.__sourceUri = null;
+    // Need to potentially remove update interval for re-requesting the MPD manifest (in case it is a dynamic MPD)
     this.__clearCurrentUpdateInterval();
     // TODO: impl any other cleanup functionality
 };
 
-Manifest.prototype.load = function load(/* optional */ callbackFn) {
+/**
+ * Kick off loading the DASH MPD Manifest (served @ the ManifestController instance's __sourceUri)
+ */
+ManifestController.prototype.load = function load() {
     var self = this;
     loadManifest(self.__sourceUri, function(data) {
         self.__manifest = data.manifestXml;
+        // (Potentially) setup the update interval for re-requesting the MPD (in case the manifest is dynamic)
         self.__setupUpdateInterval();
+        // Dispatch event to notify that the manifest has loaded.
         self.trigger({ type:self.eventList.MANIFEST_LOADED, target:self, data:self.__manifest});
-        if (isFunction(callbackFn)) { callbackFn(data.manifestXml); }
     });
 };
 
-Manifest.prototype.__clearCurrentUpdateInterval = function clearCurrentUpdateInterval() {
+/**
+ * 'Private' method that removes the update interval (if it exists), so the ManifestController instance will no longer
+ * periodically re-request the manifest (if it's dynamic).
+ */
+ManifestController.prototype.__clearCurrentUpdateInterval = function clearCurrentUpdateInterval() {
     if (!existy(this.__updateInterval)) { return; }
     clearInterval(this.__updateInterval);
 };
 
-Manifest.prototype.__setupUpdateInterval = function setupUpdateInterval() {
+/**
+ * Sets up an interval to re-request the manifest (if it's dynamic)
+ */
+ManifestController.prototype.__setupUpdateInterval = function setupUpdateInterval() {
+    // If there's already an updateInterval function, remove it.
     if (this.__updateInterval) { self.__clearCurrentUpdateInterval(); }
+    // If we shouldn't update, just bail.
     if (!this.getShouldUpdate()) { return; }
     var self = this,
         minUpdateRate = 2,
         updateRate = Math.max(this.getUpdateRate(), minUpdateRate);
+    // Setup the update interval based on the update rate (determined from the manifest) or the minimum update rate
+    // (whichever's larger).
+    // NOTE: Must store ref to created interval to potentially clear/remove it later
     this.__updateInterval = setInterval(function() {
         self.load();
-    }, updateRate);
+    }, updateRate * 1000);
 };
 
-Manifest.prototype.getMediaSetByType = function getMediaSetByType(type) {
+/**
+ * Gets the type of playlist ('static' or 'dynamic', which nearly invariably corresponds to live vs. vod) defined in the
+ * manifest.
+ *
+ * @returns {string}    the playlist type (either 'static' or 'dynamic')
+ */
+ManifestController.prototype.getPlaylistType = function getPlaylistType() {
+    var playlistType = getMpd(this.__manifest).getType();
+    return playlistType;
+};
+
+ManifestController.prototype.getUpdateRate = function getUpdateRate() {
+    var minimumUpdatePeriod = getMpd(this.__manifest).getMinimumUpdatePeriod();
+    return Number(minimumUpdatePeriod);
+};
+
+ManifestController.prototype.getShouldUpdate = function getShouldUpdate() {
+    var isDynamic = (this.getPlaylistType() === 'dynamic'),
+        hasValidUpdateRate = (this.getUpdateRate() > 0);
+    return (isDynamic && hasValidUpdateRate);
+};
+
+/**
+ *
+ * @param type
+ * @returns {MediaSet}
+ */
+ManifestController.prototype.getMediaSetByType = function getMediaSetByType(type) {
     if (mediaTypes.indexOf(type) < 0) { throw new Error('Invalid type. Value must be one of: ' + mediaTypes.join(', ')); }
     var adaptationSets = getMpd(this.__manifest).getPeriods()[0].getAdaptationSets(),
         adaptationSetWithTypeMatch = adaptationSets.find(function(adaptationSet) {
@@ -114,30 +187,29 @@ Manifest.prototype.getMediaSetByType = function getMediaSetByType(type) {
     return new MediaSet(adaptationSetWithTypeMatch);
 };
 
-Manifest.prototype.getMediaSets = function getMediaSets() {
+/**
+ *
+ * @returns {Array.<MediaSet>}
+ */
+ManifestController.prototype.getMediaSets = function getMediaSets() {
     var adaptationSets = getMpd(this.__manifest).getPeriods()[0].getAdaptationSets(),
         mediaSets = adaptationSets.map(function(adaptationSet) { return new MediaSet(adaptationSet); });
     return mediaSets;
 };
 
-Manifest.prototype.getStreamType = function getStreamType() {
-    var streamType = getMpd(this.__manifest).getType();
-    return streamType;
-};
+// Mixin event handling for the ManifestController object type definition.
+extendObject(ManifestController.prototype, EventDispatcherMixin);
 
-Manifest.prototype.getUpdateRate = function getUpdateRate() {
-    var minimumUpdatePeriod = getMpd(this.__manifest).getMinimumUpdatePeriod();
-    return Number(minimumUpdatePeriod);
-};
-
-Manifest.prototype.getShouldUpdate = function getShouldUpdate() {
-    var isDynamic = (this.getStreamType() === 'dynamic'),
-        hasValidUpdateRate = (this.getUpdateRate() > 0);
-    return (isDynamic && hasValidUpdateRate);
-};
-
-extendObject(Manifest.prototype, EventDispatcherMixin);
-
+// TODO: Move MediaSet definition to a separate .js file?
+/**
+ *
+ * Primary data view for representing the set of segment lists and other general information for a give media type
+ * (e.g. 'audio' or 'video').
+ *
+ * @param adaptationSet The MPEG-DASH correlate for a given media set, containing some way of representating segment lists
+ *                      and a set of representations for each stream variant.
+ * @constructor
+ */
 function MediaSet(adaptationSet) {
     // TODO: Additional checks & Error Throwing
     this.__adaptationSet = adaptationSet;
@@ -210,6 +282,7 @@ MediaSet.prototype.getSegmentListEndNumber = function getSegmentListEndNumber() 
     return segmentListEndNumber;
 };
 
+
 MediaSet.prototype.getSegmentLists = function getSegmentLists() {
     var representations = this.__adaptationSet.getRepresentations(),
         segmentLists = representations.map(getSegmentListForRepresentation);
@@ -237,4 +310,4 @@ MediaSet.prototype.getAvailableBandwidths = function getAvailableBandwidths() {
     );
 };
 
-module.exports = Manifest;
+module.exports = ManifestController;

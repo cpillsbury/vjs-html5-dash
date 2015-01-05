@@ -14,7 +14,6 @@ function loadManifest(url, callback) {
     };
 
     try {
-        //this.debug.log('Start loading manifest: ' + url);
         request.onload = onload;
         request.open('GET', url, true);
         request.send();
