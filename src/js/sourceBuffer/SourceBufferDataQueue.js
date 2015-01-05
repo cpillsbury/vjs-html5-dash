@@ -6,6 +6,12 @@ var isFunction = require('../util/isFunction.js'),
     extendObject = require('../util/extendObject.js'),
     EventDispatcherMixin = require('../events/EventDispatcherMixin.js');
 
+/**
+ * SourceBufferDataQueue adds/queues segments to the corresponding MSE SourceBuffer (NOTE: There should be one per media type/media set)
+ *
+ * @param sourceBuffer {SourceBuffer}   MSE SourceBuffer instance
+ * @constructor
+ */
 function SourceBufferDataQueue(sourceBuffer) {
     // TODO: Check type?
     if (!sourceBuffer) { throw new Error( 'The sourceBuffer constructor argument cannot be null.' ); }
@@ -32,7 +38,9 @@ function SourceBufferDataQueue(sourceBuffer) {
     this.__sourceBuffer = sourceBuffer;
 }
 
-// TODO: Add as "class" properties?
+/**
+ * Enumeration of events instances of this object will dispatch.
+ */
 SourceBufferDataQueue.prototype.eventList = {
     QUEUE_EMPTY: 'queueEmpty',
     SEGMENT_ADDED_TO_BUFFER: 'segmentAddedToBuffer'
