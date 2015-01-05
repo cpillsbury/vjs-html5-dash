@@ -25,10 +25,12 @@ var existy = require('./util/existy.js'),
 
 /**
  *
- * @param segmentLoader
- * @param sourceBufferDataQueue
- * @param mediaType
- * @param tech
+ * MediaTypeLoader coordinates between segment downloading and adding segments to the MSE source buffer for a given media type (e.g. 'audio' or 'video').
+ *
+ * @param segmentLoader {SegmentLoader}                 object instance that handles downloading segments for the media set
+ * @param sourceBufferDataQueue {SourceBufferDataQueue} object instance that handles adding segments to MSE SourceBuffer
+ * @param mediaType {string}                            string representing the media type (e.g. 'audio' or 'video') for the media set
+ * @param tech {object}                                 video.js Html5 tech instance.
  * @constructor
  */
 function MediaTypeLoader(segmentLoader, sourceBufferDataQueue, mediaType, tech) {
@@ -38,6 +40,9 @@ function MediaTypeLoader(segmentLoader, sourceBufferDataQueue, mediaType, tech) 
     this.__tech = tech;
 }
 
+/**
+ * Enumeration of events instances of this object will dispatch.
+ */
 MediaTypeLoader.prototype.eventList = {
     RECHECK_SEGMENT_LOADING: 'recheckSegmentLoading',
     RECHECK_CURRENT_SEGMENT_LIST: 'recheckCurrentSegmentList'
@@ -49,8 +54,17 @@ MediaTypeLoader.prototype.getSegmentLoader = function() { return this.__segmentL
 
 MediaTypeLoader.prototype.getSourceBufferDataQueue = function() { return this.__sourceBufferDataQueue; };
 
+/**
+ * Kicks off segment loading for the media set
+ */
 MediaTypeLoader.prototype.startLoadingSegments = function() {
     var self = this;
+
+    // Event listener for rechecking segment loading. This event is fired whenever a segment has been successfully
+    // downloaded and added to the buffer or, if not currently loading segments (because the buffer is sufficiently full
+    // relative to the current playback time), whenever some amount of time has elapsed and we should check on the buffer
+    // state again.
+    // NOTE: Store a reference to the event handler to potentially remove it later.
     this.__recheckSegmentLoadingHandler = function(event) {
         self.trigger({ type:self.eventList.RECHECK_CURRENT_SEGMENT_LIST, target:self });
         self.__checkSegmentLoading(MIN_DESIRED_BUFFER_SIZE, MAX_DESIRED_BUFFER_SIZE);
@@ -58,6 +72,7 @@ MediaTypeLoader.prototype.startLoadingSegments = function() {
 
     this.on(this.eventList.RECHECK_SEGMENT_LOADING, this.__recheckSegmentLoadingHandler);
 
+    // Manually check on loading segments the first time around.
     this.__checkSegmentLoading(MIN_DESIRED_BUFFER_SIZE, MAX_DESIRED_BUFFER_SIZE);
 };
 
@@ -68,6 +83,14 @@ MediaTypeLoader.prototype.stopLoadingSegments = function() {
     this.__recheckSegmentLoadingHandler = undefined;
 };
 
+/**
+ *
+ * @param minDesiredBufferSize {number} The stipulated minimum amount of time (in seconds) we want in the playback buffer
+ *                                      (relative to the current playback time) for the media type.
+ * @param maxDesiredBufferSize {number} The stipulated maximum amount of time (in seconds) we want in the playback buffer
+ *                                      (relative to the current playback time) for the media type.
+ * @private
+ */
 MediaTypeLoader.prototype.__checkSegmentLoading = function(minDesiredBufferSize, maxDesiredBufferSize) {
     // TODO: Use segment duration with currentTime & currentBufferSize to calculate which segment to grab to avoid edge cases w/rounding & precision
     var self = this,
@@ -82,6 +105,7 @@ MediaTypeLoader.prototype.__checkSegmentLoading = function(minDesiredBufferSize,
         downloadRoundTripTime,
         segmentDownloadDelay;
 
+    // Local function used to notify that we should recheck segment loading. Used when we don't need to currently load segments.
     function deferredRecheckNotification() {
         var recheckWaitTimeMS = Math.floor(Math.min(segmentDuration, 2) * 1000);
         recheckWaitTimeMS = Math.floor(Math.min(segmentDuration, 2) * 1000);
@@ -141,6 +165,15 @@ MediaTypeLoader.prototype.__checkSegmentLoading = function(minDesiredBufferSize,
     }
 };
 
+/**
+ * Download a segment from the current segment list corresponding to the stipulated media presentation time and add it
+ * to the source buffer.
+ *
+ * @param presentationTime {number} The media presentation time for which we want to download and buffer a segment
+ * @returns {boolean}               Whether or not the there are subsequent segments in the segment list, relative to the
+ *                                  media presentation time requested.
+ * @private
+ */
 MediaTypeLoader.prototype.__loadSegmentAtTime = function loadSegmentAtTime(presentationTime) {
     var self = this,
         segmentLoader = self.__segmentLoader,
@@ -151,6 +184,8 @@ MediaTypeLoader.prototype.__loadSegmentAtTime = function loadSegmentAtTime(prese
 
     segmentLoader.one(segmentLoader.eventList.SEGMENT_LOADED, function segmentLoadedHandler(event) {
         sourceBufferDataQueue.one(sourceBufferDataQueue.eventList.QUEUE_EMPTY, function(event) {
+            // Once we've completed downloading and buffering the segment, dispatch event to notify that we should recheck
+            // whether or not we should load another segment and, if so, which. (See: __checkSegmentLoading() method, above)
             self.trigger({ type:self.eventList.RECHECK_SEGMENT_LOADING, target:self });
         });
         sourceBufferDataQueue.addToQueue(event.data);
@@ -1291,6 +1326,14 @@ var existy = require('../util/existy.js'),
     DEFAULT_RETRY_COUNT = 3,
     DEFAULT_RETRY_INTERVAL = 250;
 
+/**
+ * Generic function for loading MPEG-DASH segments
+ * @param segment {object}          data view representing a segment (and relevant data for that segment)
+ * @param callbackFn {function}     callback function
+ * @param retryCount {number}       stipulates how many times we should try to load the segment before giving up
+ * @param retryInterval {number}    stipulates the amount of time (in milliseconds) we should wait before retrying to
+ *                                  download the segment if/when the download attempt fails.
+ */
 loadSegment = function(segment, callbackFn, retryCount, retryInterval) {
     var self = this;
     self.__lastDownloadCompleteTime = null;
@@ -1334,9 +1377,21 @@ loadSegment = function(segment, callbackFn, retryCount, retryInterval) {
     request.send();
 };
 
+/**
+ *
+ * SegmentLoader handles loading segments from segment lists for a given media set, based on the currently selected
+ * segment list (which corresponds to the currently set bandwidth/bitrate)
+ *
+ * @param manifestController {ManifestController}
+ * @param mediaType {string}
+ * @constructor
+ */
 function SegmentLoader(manifestController, mediaType) {
     if (!existy(manifestController)) { throw new Error('SegmentLoader must be initialized with a manifestController!'); }
     if (!existy(mediaType)) { throw new Error('SegmentLoader must be initialized with a mediaType!'); }
+    // NOTE: Rather than passing in a reference to the MediaSet instance for a media type, we pass in a reference to the
+    // controller & the mediaType so that the SegmentLoader doesn't need to be aware of state changes/updates to
+    // the manifest data (say, if the playlist is dynamic/'live').
     this.__manifest = manifestController;
     this.__mediaType = mediaType;
     // TODO: Don't like this: Need to centralize place(s) where & how __currentBandwidthChanged gets set to true/false.
@@ -1344,6 +1399,9 @@ function SegmentLoader(manifestController, mediaType) {
     this.__currentBandwidthChanged = true;
 }
 
+/**
+ * Enumeration of events instances of this object will dispatch.
+ */
 SegmentLoader.prototype.eventList = {
     INITIALIZATION_LOADED: 'initializationLoaded',
     SEGMENT_LOADED: 'segmentLoaded',
@@ -1365,6 +1423,11 @@ SegmentLoader.prototype.getCurrentBandwidth = function getCurrentBandwidth() {
     return this.__currentBandwidth;
 };
 
+/**
+ * Sets the current bandwidth, which corresponds to the currently selected segment list (i.e. the segment list in the
+ * media set from which we should be downloading segments).
+ * @param bandwidth {number}
+ */
 SegmentLoader.prototype.setCurrentBandwidth = function setCurrentBandwidth(bandwidth) {
     if (!isNumber(bandwidth)) {
         throw new Error('SegmentLoader::setCurrentBandwidth() expects a numeric value for bandwidth!');
@@ -1374,6 +1437,9 @@ SegmentLoader.prototype.setCurrentBandwidth = function setCurrentBandwidth(bandw
         throw new Error('SegmentLoader::setCurrentBandwidth() must be set to one of the following values: ' + availableBandwidths.join(', '));
     }
     if (bandwidth === this.__currentBandwidth) { return; }
+    // Track when we've switch bandwidths, since we'll need to (re)load the initialization segment for the segment list
+    // whenever we switch between segment lists. This allows SegmentLoader instances to automatically do this, hiding those
+    // details from the outside.
     this.__currentBandwidthChanged = true;
     this.__currentBandwidth = bandwidth;
 };
@@ -1419,6 +1485,13 @@ SegmentLoader.prototype.getLastDownloadRoundTripTimeSpan = function() {
     return this.getLastDownloadCompleteTime() - this.getLastDownloadStartTime();
 };
 
+/**
+ *
+ * Method for downloading the initialization segment for the currently selected segment list (which corresponds to the
+ * currently set bandwidth)
+ *
+ * @returns {boolean}
+ */
 SegmentLoader.prototype.loadInitialization = function() {
     var self = this,
         segmentList = this.getCurrentSegmentList(),
@@ -1441,6 +1514,13 @@ SegmentLoader.prototype.loadNextSegment = function() {
 };
 
 // TODO: Duplicate code below. Abstract away.
+/**
+ *
+ * Method for downloading a segment from the currently selected segment list based on its "number" (see param comment below)
+ *
+ * @param number {number}   Index-like value for specifying which segment to load from the segment list.
+ * @returns {boolean}
+ */
 SegmentLoader.prototype.loadSegmentAtNumber = function(number) {
     var self = this,
         segmentList = this.getCurrentSegmentList();
@@ -1451,6 +1531,8 @@ SegmentLoader.prototype.loadSegmentAtNumber = function(number) {
 
     var segment = segmentList.getSegmentByNumber(number);
 
+    // If the bandwidth has changed since our last download, automatically load the initialization segment for the corresponding
+    // segment list before downloading the desired segment)
     if (this.__currentBandwidthChanged) {
         this.one(this.eventList.INITIALIZATION_LOADED, function(event) {
             var initSegment = event.data;
@@ -1464,6 +1546,7 @@ SegmentLoader.prototype.loadSegmentAtNumber = function(number) {
         this.loadInitialization();
     } else {
         loadSegment.call(self, segment, function(response) {
+            // Dispatch event that provides metrics on download round trip time & bandwidth of segment (used with ABR switching logic)
             self.trigger(
                 {
                     type:self.eventList.DOWNLOAD_DATA_UPDATE,
@@ -1477,6 +1560,7 @@ SegmentLoader.prototype.loadSegmentAtNumber = function(number) {
             );
             var segmentData = new Uint8Array(response);
             self.__currentSegmentNumber = segment.getNumber();
+            //
             self.trigger({ type:self.eventList.SEGMENT_LOADED, target:self, data:segmentData });
         }, DEFAULT_RETRY_COUNT, DEFAULT_RETRY_INTERVAL);
     }
@@ -1484,6 +1568,14 @@ SegmentLoader.prototype.loadSegmentAtNumber = function(number) {
     return true;
 };
 
+/**
+ *
+ * Method for downloading a segment from the currently selected segment list based on the media presentation time that
+ * corresponds with a given segment.
+ *
+ * @param presentationTime {number} media presentation time corresponding to the segment we'd like to load from the segment list
+ * @returns {boolean}
+ */
 SegmentLoader.prototype.loadSegmentAtTime = function(presentationTime) {
     var self = this,
         segmentList = this.getCurrentSegmentList();
@@ -1494,6 +1586,8 @@ SegmentLoader.prototype.loadSegmentAtTime = function(presentationTime) {
 
     var segment = segmentList.getSegmentByTime(presentationTime);
 
+    // If the bandwidth has changed since our last download, automatically load the initialization segment for the corresponding
+    // segment list before downloading the desired segment)
     if (this.__currentBandwidthChanged) {
         this.one(this.eventList.INITIALIZATION_LOADED, function(event) {
             var initSegment = event.data;
@@ -1507,6 +1601,7 @@ SegmentLoader.prototype.loadSegmentAtTime = function(presentationTime) {
         this.loadInitialization();
     } else {
         loadSegment.call(self, segment, function(response) {
+            // Dispatch event that provides metrics on download round trip time & bandwidth of segment (used with ABR switching logic)
             self.trigger(
                 {
                     type:self.eventList.DOWNLOAD_DATA_UPDATE,
