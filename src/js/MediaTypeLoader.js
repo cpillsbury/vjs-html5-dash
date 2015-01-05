@@ -11,10 +11,12 @@ var existy = require('./util/existy.js'),
 
 /**
  *
- * @param segmentLoader
- * @param sourceBufferDataQueue
- * @param mediaType
- * @param tech
+ * MediaTypeLoader coordinates between segment downloading and adding segments to the MSE source buffer for a given media type (e.g. 'audio' or 'video').
+ *
+ * @param segmentLoader {SegmentLoader}                 object instance that handles downloading segments for the media set
+ * @param sourceBufferDataQueue {SourceBufferDataQueue} object instance that handles adding segments to MSE SourceBuffer
+ * @param mediaType {string}                            string representing the media type (e.g. 'audio' or 'video') for the media set
+ * @param tech {object}                                 video.js Html5 tech instance.
  * @constructor
  */
 function MediaTypeLoader(segmentLoader, sourceBufferDataQueue, mediaType, tech) {
@@ -24,6 +26,9 @@ function MediaTypeLoader(segmentLoader, sourceBufferDataQueue, mediaType, tech) 
     this.__tech = tech;
 }
 
+/**
+ * Enumeration of events instances of this object will dispatch.
+ */
 MediaTypeLoader.prototype.eventList = {
     RECHECK_SEGMENT_LOADING: 'recheckSegmentLoading',
     RECHECK_CURRENT_SEGMENT_LIST: 'recheckCurrentSegmentList'
@@ -35,8 +40,17 @@ MediaTypeLoader.prototype.getSegmentLoader = function() { return this.__segmentL
 
 MediaTypeLoader.prototype.getSourceBufferDataQueue = function() { return this.__sourceBufferDataQueue; };
 
+/**
+ * Kicks off segment loading for the media set
+ */
 MediaTypeLoader.prototype.startLoadingSegments = function() {
     var self = this;
+
+    // Event listener for rechecking segment loading. This event is fired whenever a segment has been successfully
+    // downloaded and added to the buffer or, if not currently loading segments (because the buffer is sufficiently full
+    // relative to the current playback time), whenever some amount of time has elapsed and we should check on the buffer
+    // state again.
+    // NOTE: Store a reference to the event handler to potentially remove it later.
     this.__recheckSegmentLoadingHandler = function(event) {
         self.trigger({ type:self.eventList.RECHECK_CURRENT_SEGMENT_LIST, target:self });
         self.__checkSegmentLoading(MIN_DESIRED_BUFFER_SIZE, MAX_DESIRED_BUFFER_SIZE);
@@ -44,6 +58,7 @@ MediaTypeLoader.prototype.startLoadingSegments = function() {
 
     this.on(this.eventList.RECHECK_SEGMENT_LOADING, this.__recheckSegmentLoadingHandler);
 
+    // Manually check on loading segments the first time around.
     this.__checkSegmentLoading(MIN_DESIRED_BUFFER_SIZE, MAX_DESIRED_BUFFER_SIZE);
 };
 
@@ -54,6 +69,14 @@ MediaTypeLoader.prototype.stopLoadingSegments = function() {
     this.__recheckSegmentLoadingHandler = undefined;
 };
 
+/**
+ *
+ * @param minDesiredBufferSize {number} The stipulated minimum amount of time (in seconds) we want in the playback buffer
+ *                                      (relative to the current playback time) for the media type.
+ * @param maxDesiredBufferSize {number} The stipulated maximum amount of time (in seconds) we want in the playback buffer
+ *                                      (relative to the current playback time) for the media type.
+ * @private
+ */
 MediaTypeLoader.prototype.__checkSegmentLoading = function(minDesiredBufferSize, maxDesiredBufferSize) {
     // TODO: Use segment duration with currentTime & currentBufferSize to calculate which segment to grab to avoid edge cases w/rounding & precision
     var self = this,
@@ -68,6 +91,7 @@ MediaTypeLoader.prototype.__checkSegmentLoading = function(minDesiredBufferSize,
         downloadRoundTripTime,
         segmentDownloadDelay;
 
+    // Local function used to notify that we should recheck segment loading. Used when we don't need to currently load segments.
     function deferredRecheckNotification() {
         var recheckWaitTimeMS = Math.floor(Math.min(segmentDuration, 2) * 1000);
         recheckWaitTimeMS = Math.floor(Math.min(segmentDuration, 2) * 1000);
@@ -127,6 +151,15 @@ MediaTypeLoader.prototype.__checkSegmentLoading = function(minDesiredBufferSize,
     }
 };
 
+/**
+ * Download a segment from the current segment list corresponding to the stipulated media presentation time and add it
+ * to the source buffer.
+ *
+ * @param presentationTime {number} The media presentation time for which we want to download and buffer a segment
+ * @returns {boolean}               Whether or not the there are subsequent segments in the segment list, relative to the
+ *                                  media presentation time requested.
+ * @private
+ */
 MediaTypeLoader.prototype.__loadSegmentAtTime = function loadSegmentAtTime(presentationTime) {
     var self = this,
         segmentLoader = self.__segmentLoader,
@@ -137,6 +170,8 @@ MediaTypeLoader.prototype.__loadSegmentAtTime = function loadSegmentAtTime(prese
 
     segmentLoader.one(segmentLoader.eventList.SEGMENT_LOADED, function segmentLoadedHandler(event) {
         sourceBufferDataQueue.one(sourceBufferDataQueue.eventList.QUEUE_EMPTY, function(event) {
+            // Once we've completed downloading and buffering the segment, dispatch event to notify that we should recheck
+            // whether or not we should load another segment and, if so, which. (See: __checkSegmentLoading() method, above)
             self.trigger({ type:self.eventList.RECHECK_SEGMENT_LOADING, target:self });
         });
         sourceBufferDataQueue.addToQueue(event.data);
