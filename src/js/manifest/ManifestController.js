@@ -4,6 +4,7 @@ var existy = require('../util/existy.js'),
     truthy = require('../util/truthy.js'),
     isString = require('../util/isString.js'),
     isFunction = require('../util/isFunction.js'),
+    isArray = require('../util/isArray.js'),
     loadManifest = require('./loadManifest.js'),
     extendObject = require('../util/extendObject.js'),
     EventDispatcherMixin = require('../events/EventDispatcherMixin.js'),
@@ -11,6 +12,7 @@ var existy = require('../util/existy.js'),
     getMpd = require('../dash/mpd/getMpd.js'),
     getSourceBufferTypeFromRepresentation,
     getMediaTypeFromMimeType,
+    findElementInArray,
     mediaTypes = require('./MediaTypes.js'),
     DEFAULT_TYPE = mediaTypes[0];
 
@@ -25,7 +27,7 @@ var existy = require('../util/existy.js'),
  */
 getMediaTypeFromMimeType = function(mimeType, types) {
     if (!isString(mimeType)) { return DEFAULT_TYPE; }   // TODO: Throw error?
-    var matchedType = types.find(function(type) {
+    var matchedType = findElementInArray(types, function(type) {
         return (!!mimeType && mimeType.indexOf(type) >= 0);
     });
 
@@ -54,6 +56,20 @@ getSourceBufferTypeFromRepresentation = function(representation) {
     var processedCodecStr = parsedCodec.join('.');
 
     return (typeStr + ';codecs="' + processedCodecStr + '"');
+};
+
+findElementInArray = function(array, predicateFn) {
+    if (!isArray(array) || !isFunction(predicateFn)) { return undefined; }
+    var i,
+        length = array.length,
+        elem;
+
+    for (i=0; i<length; i++) {
+        elem = array[i];
+        if (predicateFn(elem, i, array)) { return elem; }
+    }
+
+    return undefined;
 };
 
 /**
@@ -180,7 +196,7 @@ ManifestController.prototype.getShouldUpdate = function getShouldUpdate() {
 ManifestController.prototype.getMediaSetByType = function getMediaSetByType(type) {
     if (mediaTypes.indexOf(type) < 0) { throw new Error('Invalid type. Value must be one of: ' + mediaTypes.join(', ')); }
     var adaptationSets = getMpd(this.__manifest).getPeriods()[0].getAdaptationSets(),
-        adaptationSetWithTypeMatch = adaptationSets.find(function(adaptationSet) {
+        adaptationSetWithTypeMatch = findElementInArray(adaptationSets, function(adaptationSet) {
             return (getMediaTypeFromMimeType(adaptationSet.getMimeType(), mediaTypes) === type);
         });
     if (!existy(adaptationSetWithTypeMatch)) { return null; }
@@ -291,7 +307,7 @@ MediaSet.prototype.getSegmentLists = function getSegmentLists() {
 
 MediaSet.prototype.getSegmentListByBandwidth = function getSegmentListByBandwidth(bandwidth) {
     var representations = this.__adaptationSet.getRepresentations(),
-        representationWithBandwidthMatch = representations.find(function(representation) {
+        representationWithBandwidthMatch = findElementInArray(representations, function(representation) {
             var representationBandwidth = representation.getBandwidth();
             return (Number(representationBandwidth) === Number(bandwidth));
         }),

@@ -53,8 +53,9 @@ function PlaylistLoader(manifestController, mediaSource, tech) {
     this.__tech = tech;
     this.__mediaTypeLoaders = createMediaTypeLoaders(manifestController, mediaSource, tech);
 
-    // For each of the media types (e.g. 'audio' & 'video') in the ABR manifest...
-    this.__mediaTypeLoaders.forEach(function(mediaTypeLoader) {
+    var i;
+
+    function kickoffMediaTypeLoader(mediaTypeLoader) {
         // MediaSet-specific variables
         var segmentLoader = mediaTypeLoader.getSegmentLoader(),
             downloadRateRatio = 1.0,
@@ -91,19 +92,29 @@ function PlaylistLoader(manifestController, mediaSource, tech) {
 
         // Kickoff segment loading for the media type.
         mediaTypeLoader.startLoadingSegments();
-    });
+    }
+
+    // For each of the media types (e.g. 'audio' & 'video') in the ABR manifest...
+    for (i=0; i<this.__mediaTypeLoaders.length; i++) {
+        kickoffMediaTypeLoader(this.__mediaTypeLoaders[i]);
+    }
 
     // NOTE: This code block handles pseudo-'pausing'/'unpausing' (changing the playbackRate) based on whether or not
     // there is data available in the buffer, but indirectly, by listening to a few events and using the video element's
     // ready state.
-    var changePlaybackRateEvents = ['seeking', 'canplay', 'canplaythrough'];
-    changePlaybackRateEvents.forEach(function(eventType) {
-        tech.on(eventType, function(event) {
-            var readyState = tech.el().readyState,
-                playbackRate = (readyState === 4) ? 1 : 0;
-            tech.setPlaybackRate(playbackRate);
-        });
-    });
+    var changePlaybackRateEvents = ['seeking', 'canplay', 'canplaythrough'],
+        eventType;
+
+    function changePlaybackRateEventsHandler(event) {
+        var readyState = tech.el().readyState,
+            playbackRate = (readyState === 4) ? 1 : 0;
+        tech.setPlaybackRate(playbackRate);
+    }
+
+    for(i=0; i<changePlaybackRateEvents.length; i++) {
+        eventType = changePlaybackRateEvents[i];
+        tech.on(eventType, changePlaybackRateEvents);
+    }
 }
 
 module.exports = PlaylistLoader;

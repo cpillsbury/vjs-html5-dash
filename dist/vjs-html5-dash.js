@@ -254,8 +254,9 @@ function PlaylistLoader(manifestController, mediaSource, tech) {
     this.__tech = tech;
     this.__mediaTypeLoaders = createMediaTypeLoaders(manifestController, mediaSource, tech);
 
-    // For each of the media types (e.g. 'audio' & 'video') in the ABR manifest...
-    this.__mediaTypeLoaders.forEach(function(mediaTypeLoader) {
+    var i;
+
+    function kickoffMediaTypeLoader(mediaTypeLoader) {
         // MediaSet-specific variables
         var segmentLoader = mediaTypeLoader.getSegmentLoader(),
             downloadRateRatio = 1.0,
@@ -292,19 +293,29 @@ function PlaylistLoader(manifestController, mediaSource, tech) {
 
         // Kickoff segment loading for the media type.
         mediaTypeLoader.startLoadingSegments();
-    });
+    }
+
+    // For each of the media types (e.g. 'audio' & 'video') in the ABR manifest...
+    for (i=0; i<this.__mediaTypeLoaders.length; i++) {
+        kickoffMediaTypeLoader(this.__mediaTypeLoaders[i]);
+    }
 
     // NOTE: This code block handles pseudo-'pausing'/'unpausing' (changing the playbackRate) based on whether or not
     // there is data available in the buffer, but indirectly, by listening to a few events and using the video element's
     // ready state.
-    var changePlaybackRateEvents = ['seeking', 'canplay', 'canplaythrough'];
-    changePlaybackRateEvents.forEach(function(eventType) {
-        tech.on(eventType, function(event) {
-            var readyState = tech.el().readyState,
-                playbackRate = (readyState === 4) ? 1 : 0;
-            tech.setPlaybackRate(playbackRate);
-        });
-    });
+    var changePlaybackRateEvents = ['seeking', 'canplay', 'canplaythrough'],
+        eventType;
+
+    function changePlaybackRateEventsHandler(event) {
+        var readyState = tech.el().readyState,
+            playbackRate = (readyState === 4) ? 1 : 0;
+        tech.setPlaybackRate(playbackRate);
+    }
+
+    for(i=0; i<changePlaybackRateEvents.length; i++) {
+        eventType = changePlaybackRateEvents[i];
+        tech.on(eventType, changePlaybackRateEvents);
+    }
 }
 
 module.exports = PlaylistLoader;
@@ -758,7 +769,7 @@ createSegmentFromTemplateByNumber = function(representation, number) {
 
 createSegmentFromTemplateByTime = function(representation, seconds) {
     var segmentDuration = getSegmentDurationFromTemplate(representation),
-        number = Math.floor(seconds / segmentDuration),
+        number = Math.floor(seconds / segmentDuration) + getStartNumberFromTemplate(representation),
         segment = createSegmentFromTemplateByNumber(representation, number);
     return segment;
 };
@@ -981,6 +992,7 @@ var existy = require('../util/existy.js'),
     truthy = require('../util/truthy.js'),
     isString = require('../util/isString.js'),
     isFunction = require('../util/isFunction.js'),
+    isArray = require('../util/isArray.js'),
     loadManifest = require('./loadManifest.js'),
     extendObject = require('../util/extendObject.js'),
     EventDispatcherMixin = require('../events/EventDispatcherMixin.js'),
@@ -988,6 +1000,7 @@ var existy = require('../util/existy.js'),
     getMpd = require('../dash/mpd/getMpd.js'),
     getSourceBufferTypeFromRepresentation,
     getMediaTypeFromMimeType,
+    findElementInArray,
     mediaTypes = require('./MediaTypes.js'),
     DEFAULT_TYPE = mediaTypes[0];
 
@@ -1002,7 +1015,7 @@ var existy = require('../util/existy.js'),
  */
 getMediaTypeFromMimeType = function(mimeType, types) {
     if (!isString(mimeType)) { return DEFAULT_TYPE; }   // TODO: Throw error?
-    var matchedType = types.find(function(type) {
+    var matchedType = findElementInArray(types, function(type) {
         return (!!mimeType && mimeType.indexOf(type) >= 0);
     });
 
@@ -1031,6 +1044,20 @@ getSourceBufferTypeFromRepresentation = function(representation) {
     var processedCodecStr = parsedCodec.join('.');
 
     return (typeStr + ';codecs="' + processedCodecStr + '"');
+};
+
+findElementInArray = function(array, predicateFn) {
+    if (!isArray(array) || !isFunction(predicateFn)) { return undefined; }
+    var i,
+        length = array.length,
+        elem;
+
+    for (i=0; i<length; i++) {
+        elem = array[i];
+        if (predicateFn(elem, i, array)) { return elem; }
+    }
+
+    return undefined;
 };
 
 /**
@@ -1157,7 +1184,7 @@ ManifestController.prototype.getShouldUpdate = function getShouldUpdate() {
 ManifestController.prototype.getMediaSetByType = function getMediaSetByType(type) {
     if (mediaTypes.indexOf(type) < 0) { throw new Error('Invalid type. Value must be one of: ' + mediaTypes.join(', ')); }
     var adaptationSets = getMpd(this.__manifest).getPeriods()[0].getAdaptationSets(),
-        adaptationSetWithTypeMatch = adaptationSets.find(function(adaptationSet) {
+        adaptationSetWithTypeMatch = findElementInArray(adaptationSets, function(adaptationSet) {
             return (getMediaTypeFromMimeType(adaptationSet.getMimeType(), mediaTypes) === type);
         });
     if (!existy(adaptationSetWithTypeMatch)) { return null; }
@@ -1268,7 +1295,7 @@ MediaSet.prototype.getSegmentLists = function getSegmentLists() {
 
 MediaSet.prototype.getSegmentListByBandwidth = function getSegmentListByBandwidth(bandwidth) {
     var representations = this.__adaptationSet.getRepresentations(),
-        representationWithBandwidthMatch = representations.find(function(representation) {
+        representationWithBandwidthMatch = findElementInArray(representations, function(representation) {
             var representationBandwidth = representation.getBandwidth();
             return (Number(representationBandwidth) === Number(bandwidth));
         }),
@@ -1288,7 +1315,7 @@ MediaSet.prototype.getAvailableBandwidths = function getAvailableBandwidths() {
 };
 
 module.exports = ManifestController;
-},{"../dash/mpd/getMpd.js":5,"../dash/segments/getSegmentListForRepresentation.js":7,"../events/EventDispatcherMixin.js":9,"../util/existy.js":18,"../util/extendObject.js":19,"../util/isFunction.js":21,"../util/isString.js":23,"../util/truthy.js":24,"./MediaTypes.js":13,"./loadManifest.js":14}],13:[function(require,module,exports){
+},{"../dash/mpd/getMpd.js":5,"../dash/segments/getSegmentListForRepresentation.js":7,"../events/EventDispatcherMixin.js":9,"../util/existy.js":18,"../util/extendObject.js":19,"../util/isArray.js":20,"../util/isFunction.js":21,"../util/isString.js":23,"../util/truthy.js":24,"./MediaTypes.js":13,"./loadManifest.js":14}],13:[function(require,module,exports){
 module.exports = ['video', 'audio'];
 },{}],14:[function(require,module,exports){
 'use strict';
@@ -1697,6 +1724,12 @@ var isFunction = require('../util/isFunction.js'),
     extendObject = require('../util/extendObject.js'),
     EventDispatcherMixin = require('../events/EventDispatcherMixin.js');
 
+/**
+ * SourceBufferDataQueue adds/queues segments to the corresponding MSE SourceBuffer (NOTE: There should be one per media type/media set)
+ *
+ * @param sourceBuffer {SourceBuffer}   MSE SourceBuffer instance
+ * @constructor
+ */
 function SourceBufferDataQueue(sourceBuffer) {
     // TODO: Check type?
     if (!sourceBuffer) { throw new Error( 'The sourceBuffer constructor argument cannot be null.' ); }
@@ -1723,7 +1756,9 @@ function SourceBufferDataQueue(sourceBuffer) {
     this.__sourceBuffer = sourceBuffer;
 }
 
-// TODO: Add as "class" properties?
+/**
+ * Enumeration of events instances of this object will dispatch.
+ */
 SourceBufferDataQueue.prototype.eventList = {
     QUEUE_EMPTY: 'queueEmpty',
     SEGMENT_ADDED_TO_BUFFER: 'segmentAddedToBuffer'
@@ -1797,13 +1832,20 @@ module.exports = existy;
 
 // Extend a given object with all the properties (and their values) found in the passed-in object(s).
 var extendObject = function(obj /*, extendObject1, extendObject2, ..., extendObjectN */) {
-    Array.prototype.slice.call(arguments, 1).forEach(function(extendObject) {
+    var extendObjectsArray = Array.prototype.slice.call(arguments, 1),
+        i,
+        length = extendObjectsArray.length,
+        extendObject;
+
+    for(i=0; i<length; i++) {
+        extendObject = extendObjectsArray[i];
         if (extendObject) {
             for (var prop in extendObject) {
                 obj[prop] = extendObject[prop];
             }
         }
-    });
+    }
+
     return obj;
 };
 
