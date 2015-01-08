@@ -2,9 +2,51 @@
 
 var isFunction = require('../util/isFunction.js'),
     isArray = require('../util/isArray.js'),
+    isNumber = require('../util/isNumber.js'),
     existy = require('../util/existy.js'),
     extendObject = require('../util/extendObject.js'),
     EventDispatcherMixin = require('../events/EventDispatcherMixin.js');
+
+function createTimeRangeObject(sourceBuffer, index, transformFn) {
+    if (!isFunction(transformFn)) {
+        transformFn = function(time) { return time; };
+    }
+
+    return {
+        getStart: function() { return transformFn(sourceBuffer.buffered.start(index)); },
+        getEnd: function() { return transformFn(sourceBuffer.buffered.end(index)); },
+        getIndex: function() { return index; }
+    };
+}
+
+function createBufferedTimeRangeList(sourceBuffer, transformFn) {
+    return {
+        getLength: function() { return sourceBuffer.buffered.length; },
+        getTimeRangeByIndex: function(index) { return createTimeRangeObject(sourceBuffer, index, transformFn); },
+        getTimeRangeByTime: function(time, tolerance) {
+            if (!isNumber(tolerance)) { tolerance = 0.15; }
+            var timeRangeObj,
+                i,
+                length = sourceBuffer.buffered.length;
+
+            for (i=0; i<length; i++) {
+                timeRangeObj = createTimeRangeObject(sourceBuffer, i, transformFn);
+                if ((timeRangeObj.getStart() - tolerance) > time) { return null; }
+                if ((timeRangeObj.getEnd() + tolerance) > time) { return timeRangeObj; }
+            }
+
+            return null;
+        }
+    };
+}
+
+function createAlignedBufferedTimeRangeList(sourceBuffer, segmentDuration) {
+    function timeAlignTransformFn(time) {
+        return Math.round(time / segmentDuration) * segmentDuration;
+    }
+
+    return createBufferedTimeRangeList(sourceBuffer, timeAlignTransformFn);
+}
 
 /**
  * SourceBufferDataQueue adds/queues segments to the corresponding MSE SourceBuffer (NOTE: There should be one per media type/media set)
@@ -62,42 +104,13 @@ SourceBufferDataQueue.prototype.clearQueue = function() {
     this.__dataQueue = [];
 };
 
-SourceBufferDataQueue.prototype.hasBufferedDataForTime = function(presentationTime) {
-    return checkTimeRangesForTime(this.__sourceBuffer.buffered, presentationTime, function(startTime, endTime) {
-        return ((startTime >= 0) || (endTime >= 0));
-    });
+SourceBufferDataQueue.prototype.getBufferedTimeRangeList = function() {
+    return createBufferedTimeRangeList(this.__sourceBuffer);
 };
 
-SourceBufferDataQueue.prototype.determineAmountBufferedFromTime = function(presentationTime) {
-    // If the return value is < 0, no data is buffered @ presentationTime.
-    return checkTimeRangesForTime(this.__sourceBuffer.buffered, presentationTime,
-        function(startTime, endTime, presentationTime) {
-            return endTime - presentationTime;
-        }
-    );
+SourceBufferDataQueue.prototype.getBufferedTimeRangeListAlignedToSegmentDuration = function(segmentDuration) {
+    return createAlignedBufferedTimeRangeList(this.__sourceBuffer, segmentDuration);
 };
-
-function checkTimeRangesForTime(timeRanges, time, callback) {
-    var timeRangesLength = timeRanges.length,
-        i = 0,
-        currentStartTime,
-        currentEndTime;
-
-    for (i; i<timeRangesLength; i++) {
-        currentStartTime = timeRanges.start(i);
-        currentEndTime = timeRanges.end(i);
-        if ((time >= currentStartTime) && (time <= currentEndTime)) {
-            return isFunction(callback) ? callback(currentStartTime, currentEndTime, time) : true;
-        } else if (currentStartTime > time) {
-            // If the currentStartTime is greater than the time we're looking for, that means we've reached a time range
-            // that's past the time we're looking for (since TimeRanges should be ordered chronologically). If so, we
-            // can short circuit.
-            break;
-        }
-    }
-
-    return isFunction(callback) ? callback(-1, -1, time) : false;
-}
 
 // Add event dispatcher functionality to prototype.
 extendObject(SourceBufferDataQueue.prototype, EventDispatcherMixin);

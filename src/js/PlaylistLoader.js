@@ -113,7 +113,7 @@ function PlaylistLoader(manifestController, mediaSource, tech) {
 
     for(i=0; i<changePlaybackRateEvents.length; i++) {
         eventType = changePlaybackRateEvents[i];
-        tech.on(eventType, changePlaybackRateEvents);
+        tech.on(eventType, changePlaybackRateEventsHandler);
     }
 }
 

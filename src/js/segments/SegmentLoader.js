@@ -206,8 +206,6 @@ SegmentLoader.prototype.loadSegmentAtNumber = function(number) {
     var self = this,
         segmentList = this.getCurrentSegmentList();
 
-    console.log('BANDWIDTH OF SEGMENT BEING REQUESTED: ' + segmentList.getBandwidth());
-
     if (number > this.getEndNumber()) { return false; }
 
     var segment = segmentList.getSegmentByNumber(number);
@@ -260,8 +258,6 @@ SegmentLoader.prototype.loadSegmentAtNumber = function(number) {
 SegmentLoader.prototype.loadSegmentAtTime = function(presentationTime) {
     var self = this,
         segmentList = this.getCurrentSegmentList();
-
-    console.log('BANDWIDTH OF SEGMENT BEING REQUESTED: ' + segmentList.getBandwidth());
 
     if (presentationTime > segmentList.getTotalDuration()) { return false; }
 

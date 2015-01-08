@@ -98,12 +98,32 @@ MediaTypeLoader.prototype.__checkSegmentLoading = function(minDesiredBufferSize,
         segmentLoader = self.__segmentLoader,
         sourceBufferDataQueue = self.__sourceBufferDataQueue,
         currentTime = tech.currentTime(),
-        currentBufferSize = sourceBufferDataQueue.determineAmountBufferedFromTime(currentTime),
+        currentBufferSize,// = sourceBufferDataQueue.determineAmountBufferedFromTime(currentTime),
         segmentDuration = segmentLoader.getCurrentSegmentList().getSegmentDuration(),
         totalDuration = segmentLoader.getCurrentSegmentList().getTotalDuration(),
-        downloadPoint = (currentTime + currentBufferSize) + (segmentDuration / 4),
+        downloadPoint = currentTime,// = (currentTime + currentBufferSize) + (segmentDuration / 4),
         downloadRoundTripTime,
         segmentDownloadDelay;
+
+    var timeRangeList = sourceBufferDataQueue.getBufferedTimeRangeListAlignedToSegmentDuration(segmentDuration),
+        timeRangeObj = timeRangeList.getTimeRangeByTime(currentTime),
+        previousTimeRangeObj,
+        i,
+        length;
+
+    if (timeRangeObj) {
+        downloadPoint = timeRangeObj.getEnd();
+        length = timeRangeList.getLength();
+        i = timeRangeObj.getIndex() + 1;
+        for (;i<length;i++) {
+            previousTimeRangeObj = timeRangeObj;
+            timeRangeObj = timeRangeList.getTimeRangeByIndex(i);
+            downloadPoint = previousTimeRangeObj.getEnd();
+            if ((timeRangeObj.getStart() - downloadPoint) > 0.003) { break; }
+        }
+    }
+
+    currentBufferSize = downloadPoint - currentTime;
 
     // Local function used to notify that we should recheck segment loading. Used when we don't need to currently load segments.
     function deferredRecheckNotification() {
@@ -123,11 +143,7 @@ MediaTypeLoader.prototype.__checkSegmentLoading = function(minDesiredBufferSize,
         return;
     }
 
-    if (currentBufferSize <= 0) {
-        // Condition 1: Nothing is in the source buffer starting at the current time for the media type
-        // Response: Download the segment for the current time right now.
-        self.__loadSegmentAtTime(currentTime);
-    } else if (currentBufferSize < minDesiredBufferSize) {
+    if (currentBufferSize < minDesiredBufferSize) {
         // Condition 2: There's something in the source buffer starting at the current time for the media type, but it's
         //              below the minimum desired buffer size (seconds of playback in the buffer for the media type)
         // Response: Download the segment that would immediately follow the end of the buffer (relative to the current time).
@@ -150,9 +166,9 @@ MediaTypeLoader.prototype.__checkSegmentLoading = function(minDesiredBufferSize,
             // Response: Download the segment that would immediately follow the end of the buffer (relative to the current
             //           time), but wait to download at the rate of playback (segment duration - time to download).
             setTimeout(function() {
-                currentTime = tech.currentTime();
+                /*currentTime = tech.currentTime();
                 currentBufferSize = sourceBufferDataQueue.determineAmountBufferedFromTime(currentTime);
-                downloadPoint = (currentTime + currentBufferSize) + (segmentDuration / 2);
+                downloadPoint = (currentTime + currentBufferSize) + (segmentDuration / 2);*/
                 self.__loadSegmentAtTime(downloadPoint);
             }, Math.floor(segmentDownloadDelay * 1000));
         }
@@ -314,7 +330,7 @@ function PlaylistLoader(manifestController, mediaSource, tech) {
 
     for(i=0; i<changePlaybackRateEvents.length; i++) {
         eventType = changePlaybackRateEvents[i];
-        tech.on(eventType, changePlaybackRateEvents);
+        tech.on(eventType, changePlaybackRateEventsHandler);
     }
 }
 
@@ -771,6 +787,15 @@ createSegmentFromTemplateByTime = function(representation, seconds) {
     var segmentDuration = getSegmentDurationFromTemplate(representation),
         number = Math.floor(seconds / segmentDuration) + getStartNumberFromTemplate(representation),
         segment = createSegmentFromTemplateByNumber(representation, number);
+
+    // If we're really close to the end time of the current segment (start time + duration),
+    // this means we're really close to the start time of the next segment.
+    // Therefore, assume this is a floating-point precision issue where we were trying to grab a segment
+    // by its start time and return the next segment instead.
+    if (((segment.getStartTime() + segment.getDuration()) - seconds) <= 0.003 ) {
+        return createSegmentFromTemplateByNumber(representation, number + 1);
+    }
+
     return segment;
 };
 
@@ -1552,8 +1577,6 @@ SegmentLoader.prototype.loadSegmentAtNumber = function(number) {
     var self = this,
         segmentList = this.getCurrentSegmentList();
 
-    console.log('BANDWIDTH OF SEGMENT BEING REQUESTED: ' + segmentList.getBandwidth());
-
     if (number > this.getEndNumber()) { return false; }
 
     var segment = segmentList.getSegmentByNumber(number);
@@ -1606,8 +1629,6 @@ SegmentLoader.prototype.loadSegmentAtNumber = function(number) {
 SegmentLoader.prototype.loadSegmentAtTime = function(presentationTime) {
     var self = this,
         segmentList = this.getCurrentSegmentList();
-
-    console.log('BANDWIDTH OF SEGMENT BEING REQUESTED: ' + segmentList.getBandwidth());
 
     if (presentationTime > segmentList.getTotalDuration()) { return false; }
 
@@ -1720,9 +1741,51 @@ module.exports = selectSegmentList;
 
 var isFunction = require('../util/isFunction.js'),
     isArray = require('../util/isArray.js'),
+    isNumber = require('../util/isNumber.js'),
     existy = require('../util/existy.js'),
     extendObject = require('../util/extendObject.js'),
     EventDispatcherMixin = require('../events/EventDispatcherMixin.js');
+
+function createTimeRangeObject(sourceBuffer, index, transformFn) {
+    if (!isFunction(transformFn)) {
+        transformFn = function(time) { return time; };
+    }
+
+    return {
+        getStart: function() { return transformFn(sourceBuffer.buffered.start(index)); },
+        getEnd: function() { return transformFn(sourceBuffer.buffered.end(index)); },
+        getIndex: function() { return index; }
+    };
+}
+
+function createBufferedTimeRangeList(sourceBuffer, transformFn) {
+    return {
+        getLength: function() { return sourceBuffer.buffered.length; },
+        getTimeRangeByIndex: function(index) { return createTimeRangeObject(sourceBuffer, index, transformFn); },
+        getTimeRangeByTime: function(time, tolerance) {
+            if (!isNumber(tolerance)) { tolerance = 0.15; }
+            var timeRangeObj,
+                i,
+                length = sourceBuffer.buffered.length;
+
+            for (i=0; i<length; i++) {
+                timeRangeObj = createTimeRangeObject(sourceBuffer, i, transformFn);
+                if ((timeRangeObj.getStart() - tolerance) > time) { return null; }
+                if ((timeRangeObj.getEnd() + tolerance) > time) { return timeRangeObj; }
+            }
+
+            return null;
+        }
+    };
+}
+
+function createAlignedBufferedTimeRangeList(sourceBuffer, segmentDuration) {
+    function timeAlignTransformFn(time) {
+        return Math.round(time / segmentDuration) * segmentDuration;
+    }
+
+    return createBufferedTimeRangeList(sourceBuffer, timeAlignTransformFn);
+}
 
 /**
  * SourceBufferDataQueue adds/queues segments to the corresponding MSE SourceBuffer (NOTE: There should be one per media type/media set)
@@ -1780,48 +1843,19 @@ SourceBufferDataQueue.prototype.clearQueue = function() {
     this.__dataQueue = [];
 };
 
-SourceBufferDataQueue.prototype.hasBufferedDataForTime = function(presentationTime) {
-    return checkTimeRangesForTime(this.__sourceBuffer.buffered, presentationTime, function(startTime, endTime) {
-        return ((startTime >= 0) || (endTime >= 0));
-    });
+SourceBufferDataQueue.prototype.getBufferedTimeRangeList = function() {
+    return createBufferedTimeRangeList(this.__sourceBuffer);
 };
 
-SourceBufferDataQueue.prototype.determineAmountBufferedFromTime = function(presentationTime) {
-    // If the return value is < 0, no data is buffered @ presentationTime.
-    return checkTimeRangesForTime(this.__sourceBuffer.buffered, presentationTime,
-        function(startTime, endTime, presentationTime) {
-            return endTime - presentationTime;
-        }
-    );
+SourceBufferDataQueue.prototype.getBufferedTimeRangeListAlignedToSegmentDuration = function(segmentDuration) {
+    return createAlignedBufferedTimeRangeList(this.__sourceBuffer, segmentDuration);
 };
-
-function checkTimeRangesForTime(timeRanges, time, callback) {
-    var timeRangesLength = timeRanges.length,
-        i = 0,
-        currentStartTime,
-        currentEndTime;
-
-    for (i; i<timeRangesLength; i++) {
-        currentStartTime = timeRanges.start(i);
-        currentEndTime = timeRanges.end(i);
-        if ((time >= currentStartTime) && (time <= currentEndTime)) {
-            return isFunction(callback) ? callback(currentStartTime, currentEndTime, time) : true;
-        } else if (currentStartTime > time) {
-            // If the currentStartTime is greater than the time we're looking for, that means we've reached a time range
-            // that's past the time we're looking for (since TimeRanges should be ordered chronologically). If so, we
-            // can short circuit.
-            break;
-        }
-    }
-
-    return isFunction(callback) ? callback(-1, -1, time) : false;
-}
 
 // Add event dispatcher functionality to prototype.
 extendObject(SourceBufferDataQueue.prototype, EventDispatcherMixin);
 
 module.exports = SourceBufferDataQueue;
-},{"../events/EventDispatcherMixin.js":9,"../util/existy.js":18,"../util/extendObject.js":19,"../util/isArray.js":20,"../util/isFunction.js":21}],18:[function(require,module,exports){
+},{"../events/EventDispatcherMixin.js":9,"../util/existy.js":18,"../util/extendObject.js":19,"../util/isArray.js":20,"../util/isFunction.js":21,"../util/isNumber.js":22}],18:[function(require,module,exports){
 'use strict';
 
 function existy(x) { return (x !== null) && (x !== undefined); }

@@ -84,12 +84,32 @@ MediaTypeLoader.prototype.__checkSegmentLoading = function(minDesiredBufferSize,
         segmentLoader = self.__segmentLoader,
         sourceBufferDataQueue = self.__sourceBufferDataQueue,
         currentTime = tech.currentTime(),
-        currentBufferSize = sourceBufferDataQueue.determineAmountBufferedFromTime(currentTime),
+        currentBufferSize,// = sourceBufferDataQueue.determineAmountBufferedFromTime(currentTime),
         segmentDuration = segmentLoader.getCurrentSegmentList().getSegmentDuration(),
         totalDuration = segmentLoader.getCurrentSegmentList().getTotalDuration(),
-        downloadPoint = (currentTime + currentBufferSize) + (segmentDuration / 4),
+        downloadPoint = currentTime,// = (currentTime + currentBufferSize) + (segmentDuration / 4),
         downloadRoundTripTime,
         segmentDownloadDelay;
+
+    var timeRangeList = sourceBufferDataQueue.getBufferedTimeRangeListAlignedToSegmentDuration(segmentDuration),
+        timeRangeObj = timeRangeList.getTimeRangeByTime(currentTime),
+        previousTimeRangeObj,
+        i,
+        length;
+
+    if (timeRangeObj) {
+        downloadPoint = timeRangeObj.getEnd();
+        length = timeRangeList.getLength();
+        i = timeRangeObj.getIndex() + 1;
+        for (;i<length;i++) {
+            previousTimeRangeObj = timeRangeObj;
+            timeRangeObj = timeRangeList.getTimeRangeByIndex(i);
+            downloadPoint = previousTimeRangeObj.getEnd();
+            if ((timeRangeObj.getStart() - downloadPoint) > 0.003) { break; }
+        }
+    }
+
+    currentBufferSize = downloadPoint - currentTime;
 
     // Local function used to notify that we should recheck segment loading. Used when we don't need to currently load segments.
     function deferredRecheckNotification() {
@@ -109,11 +129,7 @@ MediaTypeLoader.prototype.__checkSegmentLoading = function(minDesiredBufferSize,
         return;
     }
 
-    if (currentBufferSize <= 0) {
-        // Condition 1: Nothing is in the source buffer starting at the current time for the media type
-        // Response: Download the segment for the current time right now.
-        self.__loadSegmentAtTime(currentTime);
-    } else if (currentBufferSize < minDesiredBufferSize) {
+    if (currentBufferSize < minDesiredBufferSize) {
         // Condition 2: There's something in the source buffer starting at the current time for the media type, but it's
         //              below the minimum desired buffer size (seconds of playback in the buffer for the media type)
         // Response: Download the segment that would immediately follow the end of the buffer (relative to the current time).
@@ -136,9 +152,9 @@ MediaTypeLoader.prototype.__checkSegmentLoading = function(minDesiredBufferSize,
             // Response: Download the segment that would immediately follow the end of the buffer (relative to the current
             //           time), but wait to download at the rate of playback (segment duration - time to download).
             setTimeout(function() {
-                currentTime = tech.currentTime();
+                /*currentTime = tech.currentTime();
                 currentBufferSize = sourceBufferDataQueue.determineAmountBufferedFromTime(currentTime);
-                downloadPoint = (currentTime + currentBufferSize) + (segmentDuration / 2);
+                downloadPoint = (currentTime + currentBufferSize) + (segmentDuration / 2);*/
                 self.__loadSegmentAtTime(downloadPoint);
             }, Math.floor(segmentDownloadDelay * 1000));
         }

@@ -145,6 +145,15 @@ createSegmentFromTemplateByTime = function(representation, seconds) {
     var segmentDuration = getSegmentDurationFromTemplate(representation),
         number = Math.floor(seconds / segmentDuration) + getStartNumberFromTemplate(representation),
         segment = createSegmentFromTemplateByNumber(representation, number);
+
+    // If we're really close to the end time of the current segment (start time + duration),
+    // this means we're really close to the start time of the next segment.
+    // Therefore, assume this is a floating-point precision issue where we were trying to grab a segment
+    // by its start time and return the next segment instead.
+    if (((segment.getStartTime() + segment.getDuration()) - seconds) <= 0.003 ) {
+        return createSegmentFromTemplateByNumber(representation, number + 1);
+    }
+
     return segment;
 };
 
