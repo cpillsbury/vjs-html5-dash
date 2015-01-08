@@ -98,19 +98,20 @@ MediaTypeLoader.prototype.__checkSegmentLoading = function(minDesiredBufferSize,
         segmentLoader = self.__segmentLoader,
         sourceBufferDataQueue = self.__sourceBufferDataQueue,
         currentTime = tech.currentTime(),
-        currentBufferSize,// = sourceBufferDataQueue.determineAmountBufferedFromTime(currentTime),
+        currentBufferSize,
         segmentDuration = segmentLoader.getCurrentSegmentList().getSegmentDuration(),
         totalDuration = segmentLoader.getCurrentSegmentList().getTotalDuration(),
-        downloadPoint = currentTime,// = (currentTime + currentBufferSize) + (segmentDuration / 4),
+        downloadPoint = currentTime,
         downloadRoundTripTime,
-        segmentDownloadDelay;
-
-    var timeRangeList = sourceBufferDataQueue.getBufferedTimeRangeListAlignedToSegmentDuration(segmentDuration),
+        segmentDownloadDelay,
+        timeRangeList = sourceBufferDataQueue.getBufferedTimeRangeListAlignedToSegmentDuration(segmentDuration),
         timeRangeObj = timeRangeList.getTimeRangeByTime(currentTime),
         previousTimeRangeObj,
         i,
         length;
 
+    // Find the true buffer edge, since the MSE buffer time ranges might be falsely reporting that there are
+    // multiple time ranges when they are temporally adjacent.
     if (timeRangeObj) {
         downloadPoint = timeRangeObj.getEnd();
         length = timeRangeList.getLength();
