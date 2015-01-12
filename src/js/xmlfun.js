@@ -97,6 +97,37 @@ var getInheritableElement = function(nodeName, shouldStopPred) {
     };
 };
 
+var getChildElementByNodeName = function(nodeName) {
+    if ((!isString(nodeName)) || nodeName === '') { return undefined; }
+    return function(elem) {
+        if (!existy(elem) || !isFunction(elem.getElementsByTagName)) { return undefined; }
+        var initialMatches = elem.getElementsByTagName(nodeName),
+            currentElem;
+        if (!existy(initialMatches) || initialMatches.length <= 0) { return undefined; }
+        currentElem = initialMatches[0];
+        return (currentElem.parentNode === elem) ? currentElem : undefined;
+    };
+};
+
+var getMultiLevelElementList = function(nodeName, shouldStopPred) {
+    if ((!isString(nodeName)) || nodeName === '') { return undefined; }
+    if (!isFunction(shouldStopPred)) { shouldStopPred = function() { return false; }; }
+    var getMatchingChildNodeFn = getChildElementByNodeName(nodeName);
+    return function(elem) {
+        var currentElem = elem,
+            multiLevelElemList = [],
+            matchingElem;
+        // TODO: Replace w/recursive fn?
+        while (existy(currentElem) && !shouldStopPred(currentElem)) {
+            matchingElem = getMatchingChildNodeFn(currentElem);
+            if (existy(matchingElem)) { multiLevelElemList.push(matchingElem); }
+            currentElem = currentElem.parentNode;
+        }
+
+        return multiLevelElemList.length > 0 ? multiLevelElemList : undefined;
+    };
+};
+
 // TODO: Implement me for BaseURL or use existing fn (See: mpd.js buildBaseUrl())
 /*var buildHierarchicallyStructuredValue = function(valueFn, buildFn, stopPred) {
 
@@ -114,5 +145,6 @@ xmlfun.getAncestors = getAncestors;
 xmlfun.getAttrFn = getAttrFn;
 xmlfun.preApplyArgsFn = preApplyArgsFn;
 xmlfun.getInheritableElement = getInheritableElement;
+xmlfun.getMultiLevelElementList = getMultiLevelElementList;
 
 module.exports = xmlfun;

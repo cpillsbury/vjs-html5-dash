@@ -44,6 +44,10 @@ MediaTypeLoader.prototype.getSourceBufferDataQueue = function() { return this.__
  * Kicks off segment loading for the media set
  */
 MediaTypeLoader.prototype.startLoadingSegments = function() {
+    this.startLoadingSegmentsForStaticPlaylist();
+};
+
+MediaTypeLoader.prototype.startLoadingSegmentsForStaticPlaylist = function() {
     var self = this;
 
     // Event listener for rechecking segment loading. This event is fired whenever a segment has been successfully

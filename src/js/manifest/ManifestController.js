@@ -7,6 +7,7 @@ var existy = require('../util/existy.js'),
     isArray = require('../util/isArray.js'),
     loadManifest = require('./loadManifest.js'),
     extendObject = require('../util/extendObject.js'),
+    parseMediaPresentationDuration = require('../dash/mpd/util.js').parseMediaPresentationDuration,
     EventDispatcherMixin = require('../events/EventDispatcherMixin.js'),
     getSegmentListForRepresentation = require('../dash/segments/getSegmentListForRepresentation.js'),
     getMpd = require('../dash/mpd/getMpd.js'),
@@ -128,6 +129,7 @@ ManifestController.prototype.__clearSourceUri = function clearSourceUri() {
  * Kick off loading the DASH MPD Manifest (served @ the ManifestController instance's __sourceUri)
  */
 ManifestController.prototype.load = function load() {
+    // TODO: Currently clearing & re-setting update interval after every request. Either use setTimeout() or only setup interval once
     var self = this;
     loadManifest(self.__sourceUri, function(data) {
         self.__manifest = data.manifestXml;
@@ -152,7 +154,7 @@ ManifestController.prototype.__clearCurrentUpdateInterval = function clearCurren
  */
 ManifestController.prototype.__setupUpdateInterval = function setupUpdateInterval() {
     // If there's already an updateInterval function, remove it.
-    if (this.__updateInterval) { self.__clearCurrentUpdateInterval(); }
+    if (this.__updateInterval) { this.__clearCurrentUpdateInterval(); }
     // If we shouldn't update, just bail.
     if (!this.getShouldUpdate()) { return; }
     var self = this,
@@ -178,14 +180,19 @@ ManifestController.prototype.getPlaylistType = function getPlaylistType() {
 };
 
 ManifestController.prototype.getUpdateRate = function getUpdateRate() {
-    var minimumUpdatePeriod = getMpd(this.__manifest).getMinimumUpdatePeriod();
-    return Number(minimumUpdatePeriod);
+    var minimumUpdatePeriodStr = getMpd(this.__manifest).getMinimumUpdatePeriod(),
+        minimumUpdatePeriod = parseMediaPresentationDuration(minimumUpdatePeriodStr);
+    return minimumUpdatePeriod;
 };
 
 ManifestController.prototype.getShouldUpdate = function getShouldUpdate() {
     var isDynamic = (this.getPlaylistType() === 'dynamic'),
         hasValidUpdateRate = (this.getUpdateRate() > 0);
     return (isDynamic && hasValidUpdateRate);
+};
+
+ManifestController.prototype.getMpd = function() {
+    return getMpd(this.__manifest);
 };
 
 /**
@@ -256,6 +263,13 @@ MediaSet.prototype.getTotalDuration = function getTotalDuration() {
         segmentList = getSegmentListForRepresentation(representation),
         totalDuration = segmentList.getTotalDuration();
     return totalDuration;
+};
+
+MediaSet.prototype.getUTCWallClockStartTime = function() {
+    var representation = this.__adaptationSet.getRepresentations()[0],
+        segmentList = getSegmentListForRepresentation(representation),
+        wallClockTime = segmentList.getUTCWallClockStartTime();
+    return wallClockTime;
 };
 
 // NOTE: Currently assuming these values will be consistent across all representations. While this is *usually*

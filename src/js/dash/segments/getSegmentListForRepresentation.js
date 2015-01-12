@@ -3,15 +3,18 @@
 var existy = require('../../util/existy.js'),
     xmlfun = require('../../xmlfun.js'),
     parseMediaPresentationDuration = require('../mpd/util.js').parseMediaPresentationDuration,
+    parseDateTime = require('../mpd/util.js').parseDateTime,
     segmentTemplate = require('./segmentTemplate'),
     createSegmentListFromTemplate,
     createSegmentFromTemplateByNumber,
     createSegmentFromTemplateByTime,
+    createSegmentFromTemplateByUTCWallClockTime,
     getType,
     getBandwidth,
     getWidth,
     getHeight,
     getTotalDurationFromTemplate,
+    getUTCWallClockStartTimeFromTemplate,
     getSegmentDurationFromTemplate,
     getTotalSegmentCountFromTemplate,
     getStartNumberFromTemplate,
@@ -51,8 +54,14 @@ getTotalDurationFromTemplate = function(representation) {
     // TODO: Support period-relative presentation time
     var mediaPresentationDuration = representation.getMpd().getMediaPresentationDuration(),
         parsedMediaPresentationDuration = existy(mediaPresentationDuration) ? Number(parseMediaPresentationDuration(mediaPresentationDuration)) : Number.NaN,
-        presentationTimeOffset = Number(representation.getSegmentTemplate().getPresentationTimeOffset());
+        presentationTimeOffset = Number(representation.getSegmentTemplate().getPresentationTimeOffset()) || 0;
     return existy(parsedMediaPresentationDuration) ? Number(parsedMediaPresentationDuration - presentationTimeOffset) : Number.NaN;
+};
+
+getUTCWallClockStartTimeFromTemplate = function(representation) {
+    var wallClockTimeStr = representation.getMpd().getAvailabilityStartTime(),
+        wallClockUnixTimeUtc = existy(wallClockTimeStr) ? parseDateTime(wallClockTimeStr) : Number.NaN;
+    return wallClockUnixTimeUtc;
 };
 
 getSegmentDurationFromTemplate = function(representation) {
@@ -80,6 +89,7 @@ createSegmentListFromTemplate = function(representation) {
         getWidth: xmlfun.preApplyArgsFn(getWidth, representation),
         getTotalDuration: xmlfun.preApplyArgsFn(getTotalDurationFromTemplate, representation),
         getSegmentDuration: xmlfun.preApplyArgsFn(getSegmentDurationFromTemplate, representation),
+        getUTCWallClockStartTime: xmlfun.preApplyArgsFn(getUTCWallClockStartTimeFromTemplate, representation),
         getTotalSegmentCount: xmlfun.preApplyArgsFn(getTotalSegmentCountFromTemplate, representation),
         getStartNumber: xmlfun.preApplyArgsFn(getStartNumberFromTemplate, representation),
         getEndNumber: xmlfun.preApplyArgsFn(getEndNumberFromTemplate, representation),
@@ -98,7 +108,8 @@ createSegmentListFromTemplate = function(representation) {
             return initialization;
         },
         getSegmentByNumber: function(number) { return createSegmentFromTemplateByNumber(representation, number); },
-        getSegmentByTime: function(seconds) { return createSegmentFromTemplateByTime(representation, seconds); }
+        getSegmentByTime: function(seconds) { return createSegmentFromTemplateByTime(representation, seconds); },
+        getSegmentByUTCWallClockTime: function(utcMilliseconds) { return createSegmentFromTemplateByUTCWallClockTime(representation, utcMilliseconds); }
     };
 };
 
@@ -118,7 +129,10 @@ createSegmentFromTemplateByNumber = function(representation, number) {
         return baseUrl + replacedTokensUrl;
     };
     segment.getStartTime = function() {
-        return number * getSegmentDurationFromTemplate(representation);
+        return (number - getStartNumberFromTemplate(representation)) * getSegmentDurationFromTemplate(representation);
+    };
+    segment.getUTCWallClockStartTime = function() {
+        return getUTCWallClockStartTimeFromTemplate(representation) + Math.round(((number - getStartNumberFromTemplate(representation)) * getSegmentDurationFromTemplate(representation)) * 1000);
     };
     segment.getDuration = function() {
         // TODO: Verify
@@ -143,7 +157,8 @@ createSegmentFromTemplateByNumber = function(representation, number) {
 
 createSegmentFromTemplateByTime = function(representation, seconds) {
     var segmentDuration = getSegmentDurationFromTemplate(representation),
-        number = Math.floor(seconds / segmentDuration) + getStartNumberFromTemplate(representation),
+        startNumber = getStartNumberFromTemplate(representation) || 0,
+        number = Math.floor(seconds / segmentDuration) + startNumber,
         segment = createSegmentFromTemplateByNumber(representation, number);
 
     // If we're really close to the end time of the current segment (start time + duration),
@@ -155,6 +170,15 @@ createSegmentFromTemplateByTime = function(representation, seconds) {
     }
 
     return segment;
+};
+
+createSegmentFromTemplateByUTCWallClockTime = function(representation, unixTimeUtcMilliseconds) {
+    var wallClockStartTime = getUTCWallClockStartTimeFromTemplate(representation),
+        presentationTime;
+    if (Number.isNaN(wallClockStartTime)) { return null; }
+    presentationTime = (unixTimeUtcMilliseconds - wallClockStartTime)/1000;
+    if (Number.isNaN(presentationTime)) { return null; }
+    return createSegmentFromTemplateByTime(representation, presentationTime);
 };
 
 function getSegmentListForRepresentation(representation) {

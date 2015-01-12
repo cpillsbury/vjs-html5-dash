@@ -58,6 +58,10 @@ MediaTypeLoader.prototype.getSourceBufferDataQueue = function() { return this.__
  * Kicks off segment loading for the media set
  */
 MediaTypeLoader.prototype.startLoadingSegments = function() {
+    this.startLoadingSegmentsForStaticPlaylist();
+};
+
+MediaTypeLoader.prototype.startLoadingSegmentsForStaticPlaylist = function() {
     var self = this;
 
     // Event listener for rechecking segment loading. This event is fired whenever a segment has been successfully
@@ -383,6 +387,9 @@ module.exports = SourceHandler;
 
 var xmlfun = require('../../xmlfun.js'),
     util = require('./util.js'),
+    isArray = require('../../util/isArray.js'),
+    isFunction = require('../../util/isFunction.js'),
+    isString = require('../../util/isString.js'),
     parseRootUrl = util.parseRootUrl,
     createMpdObject,
     createPeriodObject,
@@ -401,7 +408,6 @@ var xmlfun = require('../../xmlfun.js'),
 var buildBaseUrl = function(xmlNode) {
     var elemHierarchy = [xmlNode].concat(xmlfun.getAncestors(xmlNode)),
         foundLocalBaseUrl = false;
-    //var baseUrls = _.map(elemHierarchy, function(elem) {
     var baseUrls = elemHierarchy.map(function(elem) {
         if (foundLocalBaseUrl) { return ''; }
         if (!elem.hasChildNodes()) { return ''; }
@@ -445,12 +451,15 @@ var getWidth = xmlfun.getInheritableAttribute('width'),
     getMimeType = xmlfun.getInheritableAttribute('mimeType'),
     getCodecs = xmlfun.getInheritableAttribute('codecs');
 
-var getSegmentTemplateXml = xmlfun.getInheritableElement('SegmentTemplate', doesntHaveCommonProperties);
+var getSegmentTemplateXmlList = xmlfun.getMultiLevelElementList('SegmentTemplate');
 
 // MPD Attr fns
 var getMediaPresentationDuration = xmlfun.getAttrFn('mediaPresentationDuration'),
     getType = xmlfun.getAttrFn('type'),
-    getMinimumUpdatePeriod = xmlfun.getAttrFn('minimumUpdatePeriod');
+    getMinimumUpdatePeriod = xmlfun.getAttrFn('minimumUpdatePeriod'),
+    getAvailabilityStartTime = xmlfun.getAttrFn('availabilityStartTime'),
+    getSuggestedPresentationDelay = xmlfun.getAttrFn('suggestedPresentationDelay'),
+    getTimeShiftBufferDepth = xmlfun.getAttrFn('timeShiftBufferDepth');
 
 // Representation Attr fns
 var getId = xmlfun.getAttrFn('id'),
@@ -472,7 +481,10 @@ createMpdObject = function(xmlNode) {
         getPeriods: xmlfun.preApplyArgsFn(getDescendantObjectsArrayByName, xmlNode, 'Period', createPeriodObject),
         getMediaPresentationDuration: xmlfun.preApplyArgsFn(getMediaPresentationDuration, xmlNode),
         getType: xmlfun.preApplyArgsFn(getType, xmlNode),
-        getMinimumUpdatePeriod: xmlfun.preApplyArgsFn(getMinimumUpdatePeriod, xmlNode)
+        getMinimumUpdatePeriod: xmlfun.preApplyArgsFn(getMinimumUpdatePeriod, xmlNode),
+        getAvailabilityStartTime: xmlfun.preApplyArgsFn(getAvailabilityStartTime, xmlNode),
+        getSuggestedPresentationDelay: xmlfun.preApplyArgsFn(getSuggestedPresentationDelay, xmlNode),
+        getTimeShiftBufferDepth: xmlfun.preApplyArgsFn(getTimeShiftBufferDepth, xmlNode)
     };
 };
 
@@ -494,7 +506,7 @@ createAdaptationSetObject = function(xmlNode) {
         // Descendants, Ancestors, & Siblings
         getRepresentations: xmlfun.preApplyArgsFn(getDescendantObjectsArrayByName, xmlNode, 'Representation', createRepresentationObject),
         getSegmentTemplate: function() {
-            return createSegmentTemplate(getSegmentTemplateXml(xmlNode));
+            return createSegmentTemplate(getSegmentTemplateXmlList(xmlNode));
         },
         getPeriod: xmlfun.preApplyArgsFn(getAncestorObjectByName, xmlNode, 'Period', createPeriodObject),
         getMpd: xmlfun.preApplyArgsFn(getAncestorObjectByName, xmlNode, 'MPD', createMpdObject),
@@ -508,7 +520,7 @@ createRepresentationObject = function(xmlNode) {
         xml: xmlNode,
         // Descendants, Ancestors, & Siblings
         getSegmentTemplate: function() {
-            return createSegmentTemplate(getSegmentTemplateXml(xmlNode));
+            return createSegmentTemplate(getSegmentTemplateXmlList(xmlNode));
         },
         getAdaptationSet: xmlfun.preApplyArgsFn(getAncestorObjectByName, xmlNode, 'AdaptationSet', createAdaptationSetObject),
         getPeriod: xmlfun.preApplyArgsFn(getAncestorObjectByName, xmlNode, 'Period', createPeriodObject),
@@ -525,20 +537,37 @@ createRepresentationObject = function(xmlNode) {
     };
 };
 
-createSegmentTemplate = function(xmlNode) {
+createSegmentTemplate = function(xmlArray) {
+    // Effectively a find function + a map function.
+    function getAttrFromXmlArray(attrGetterFn, xmlArray) {
+        if (!isArray(xmlArray)) { return undefined; }
+        if (!isFunction(attrGetterFn)) { return undefined; }
+
+        var i,
+            length = xmlArray.length,
+            currentAttrValue;
+
+        for (i=0; i<xmlArray.length; i++) {
+            currentAttrValue = attrGetterFn(xmlArray[i]);
+            if (isString(currentAttrValue) && currentAttrValue !== '') { return currentAttrValue; }
+        }
+
+        return undefined;
+    }
+
     return {
-        xml: xmlNode,
+        xml: xmlArray,
         // Descendants, Ancestors, & Siblings
-        getAdaptationSet: xmlfun.preApplyArgsFn(getAncestorObjectByName, xmlNode, 'AdaptationSet', createAdaptationSetObject),
-        getPeriod: xmlfun.preApplyArgsFn(getAncestorObjectByName, xmlNode, 'Period', createPeriodObject),
-        getMpd: xmlfun.preApplyArgsFn(getAncestorObjectByName, xmlNode, 'MPD', createMpdObject),
+        getAdaptationSet: xmlfun.preApplyArgsFn(getAncestorObjectByName, xmlArray[0], 'AdaptationSet', createAdaptationSetObject),
+        getPeriod: xmlfun.preApplyArgsFn(getAncestorObjectByName, xmlArray[0], 'Period', createPeriodObject),
+        getMpd: xmlfun.preApplyArgsFn(getAncestorObjectByName, xmlArray[0], 'MPD', createMpdObject),
         // Attrs
-        getInitialization: xmlfun.preApplyArgsFn(getInitialization, xmlNode),
-        getMedia: xmlfun.preApplyArgsFn(getMedia, xmlNode),
-        getDuration: xmlfun.preApplyArgsFn(getDuration, xmlNode),
-        getTimescale: xmlfun.preApplyArgsFn(getTimescale, xmlNode),
-        getPresentationTimeOffset: xmlfun.preApplyArgsFn(getPresentationTimeOffset, xmlNode),
-        getStartNumber: xmlfun.preApplyArgsFn(getStartNumber, xmlNode)
+        getInitialization: xmlfun.preApplyArgsFn(getAttrFromXmlArray, getInitialization, xmlArray),
+        getMedia: xmlfun.preApplyArgsFn(getAttrFromXmlArray, getMedia, xmlArray),
+        getDuration: xmlfun.preApplyArgsFn(getAttrFromXmlArray, getDuration, xmlArray),
+        getTimescale: xmlfun.preApplyArgsFn(getAttrFromXmlArray, getTimescale, xmlArray),
+        getPresentationTimeOffset: xmlfun.preApplyArgsFn(getAttrFromXmlArray, getPresentationTimeOffset, xmlArray),
+        getStartNumber: xmlfun.preApplyArgsFn(getAttrFromXmlArray, getStartNumber, xmlArray)
     };
 };
 
@@ -591,12 +620,13 @@ getAncestorObjectByName = function(xmlNode, tagName, mapFn) {
 };
 
 module.exports = getMpd;
-},{"../../xmlfun.js":25,"./util.js":6}],6:[function(require,module,exports){
+},{"../../util/isArray.js":20,"../../util/isFunction.js":21,"../../util/isString.js":23,"../../xmlfun.js":25,"./util.js":6}],6:[function(require,module,exports){
 'use strict';
 
 var parseRootUrl,
     // TODO: Should presentationDuration parsing be in util or somewhere else?
     parseMediaPresentationDuration,
+    parseDateTime,
     SECONDS_IN_YEAR = 365 * 24 * 60 * 60,
     SECONDS_IN_MONTH = 30 * 24 * 60 * 60, // not precise!
     SECONDS_IN_DAY = 24 * 60 * 60,
@@ -604,7 +634,8 @@ var parseRootUrl,
     SECONDS_IN_MIN = 60,
     MINUTES_IN_HOUR = 60,
     MILLISECONDS_IN_SECONDS = 1000,
-    durationRegex = /^P(([\d.]*)Y)?(([\d.]*)M)?(([\d.]*)D)?T?(([\d.]*)H)?(([\d.]*)M)?(([\d.]*)S)?/;
+    durationRegex = /^P(([\d.]*)Y)?(([\d.]*)M)?(([\d.]*)D)?T?(([\d.]*)H)?(([\d.]*)M)?(([\d.]*)S)?/,
+    dateTimeRegex = /^([0-9]{4})-([0-9]{2})-([0-9]{2})T([0-9]{2}):([0-9]{2})(?::([0-9]*)(\.[0-9]*)?)?(?:([+-])([0-9]{2})([0-9]{2}))?/;
 
 parseRootUrl = function(url) {
     if (typeof url !== 'string') {
@@ -625,7 +656,9 @@ parseRootUrl = function(url) {
 // TODO: Should presentationDuration parsing be in util or somewhere else?
 parseMediaPresentationDuration = function (str) {
     //str = "P10Y10M10DT10H10M10.1S";
+    if (!str) { return Number.NaN; }
     var match = durationRegex.exec(str);
+    if (!match) { return Number.NaN; }
     return (parseFloat(match[2] || 0) * SECONDS_IN_YEAR +
         parseFloat(match[4] || 0) * SECONDS_IN_MONTH +
         parseFloat(match[6] || 0) * SECONDS_IN_DAY +
@@ -634,9 +667,42 @@ parseMediaPresentationDuration = function (str) {
         parseFloat(match[12] || 0));
 };
 
+/**
+ * Parser for formatted datetime strings conforming to the ISO 8601 standard.
+ * General Format:  YYYY-MM-DDTHH:MM:SSZ (UTC) or YYYY-MM-DDTHH:MM:SS+HH:MM (time zone localization)
+ * Ex String:       2014-12-17T14:09:58Z (UTC) or 2014-12-17T14:15:58+06:00 (time zone localization) / 2014-12-17T14:03:58-06:00 (time zone localization)
+ *
+ * @param str {string}  ISO 8601-compliant datetime string.
+ * @returns {number} UTC Unix time.
+ */
+parseDateTime = function(str) {
+    var match = dateTimeRegex.exec(str),
+        utcDate;
+
+    // If the string does not contain a timezone offset different browsers can interpret it either
+    // as UTC or as a local time so we have to parse the string manually to normalize the given date value for
+    // all browsers
+    utcDate = Date.UTC(
+        parseInt(match[1], 10),
+        parseInt(match[2], 10)-1, // months start from zero
+        parseInt(match[3], 10),
+        parseInt(match[4], 10),
+        parseInt(match[5], 10),
+        (match[6] && parseInt(match[6], 10) || 0),
+        (match[7] && parseFloat(match[7]) * MILLISECONDS_IN_SECONDS) || 0);
+    // If the date has timezone offset take it into account as well
+    if (match[9] && match[10]) {
+        var timezoneOffset = parseInt(match[9], 10) * MINUTES_IN_HOUR + parseInt(match[10], 10);
+        utcDate += (match[8] === '+' ? -1 : +1) * timezoneOffset * SECONDS_IN_MIN * MILLISECONDS_IN_SECONDS;
+    }
+
+    return utcDate;
+};
+
 var util = {
     parseRootUrl: parseRootUrl,
-    parseMediaPresentationDuration: parseMediaPresentationDuration
+    parseMediaPresentationDuration: parseMediaPresentationDuration,
+    parseDateTime: parseDateTime
 };
 
 module.exports = util;
@@ -646,15 +712,18 @@ module.exports = util;
 var existy = require('../../util/existy.js'),
     xmlfun = require('../../xmlfun.js'),
     parseMediaPresentationDuration = require('../mpd/util.js').parseMediaPresentationDuration,
+    parseDateTime = require('../mpd/util.js').parseDateTime,
     segmentTemplate = require('./segmentTemplate'),
     createSegmentListFromTemplate,
     createSegmentFromTemplateByNumber,
     createSegmentFromTemplateByTime,
+    createSegmentFromTemplateByUTCWallClockTime,
     getType,
     getBandwidth,
     getWidth,
     getHeight,
     getTotalDurationFromTemplate,
+    getUTCWallClockStartTimeFromTemplate,
     getSegmentDurationFromTemplate,
     getTotalSegmentCountFromTemplate,
     getStartNumberFromTemplate,
@@ -694,8 +763,14 @@ getTotalDurationFromTemplate = function(representation) {
     // TODO: Support period-relative presentation time
     var mediaPresentationDuration = representation.getMpd().getMediaPresentationDuration(),
         parsedMediaPresentationDuration = existy(mediaPresentationDuration) ? Number(parseMediaPresentationDuration(mediaPresentationDuration)) : Number.NaN,
-        presentationTimeOffset = Number(representation.getSegmentTemplate().getPresentationTimeOffset());
+        presentationTimeOffset = Number(representation.getSegmentTemplate().getPresentationTimeOffset()) || 0;
     return existy(parsedMediaPresentationDuration) ? Number(parsedMediaPresentationDuration - presentationTimeOffset) : Number.NaN;
+};
+
+getUTCWallClockStartTimeFromTemplate = function(representation) {
+    var wallClockTimeStr = representation.getMpd().getAvailabilityStartTime(),
+        wallClockUnixTimeUtc = existy(wallClockTimeStr) ? parseDateTime(wallClockTimeStr) : Number.NaN;
+    return wallClockUnixTimeUtc;
 };
 
 getSegmentDurationFromTemplate = function(representation) {
@@ -723,6 +798,7 @@ createSegmentListFromTemplate = function(representation) {
         getWidth: xmlfun.preApplyArgsFn(getWidth, representation),
         getTotalDuration: xmlfun.preApplyArgsFn(getTotalDurationFromTemplate, representation),
         getSegmentDuration: xmlfun.preApplyArgsFn(getSegmentDurationFromTemplate, representation),
+        getUTCWallClockStartTime: xmlfun.preApplyArgsFn(getUTCWallClockStartTimeFromTemplate, representation),
         getTotalSegmentCount: xmlfun.preApplyArgsFn(getTotalSegmentCountFromTemplate, representation),
         getStartNumber: xmlfun.preApplyArgsFn(getStartNumberFromTemplate, representation),
         getEndNumber: xmlfun.preApplyArgsFn(getEndNumberFromTemplate, representation),
@@ -741,7 +817,8 @@ createSegmentListFromTemplate = function(representation) {
             return initialization;
         },
         getSegmentByNumber: function(number) { return createSegmentFromTemplateByNumber(representation, number); },
-        getSegmentByTime: function(seconds) { return createSegmentFromTemplateByTime(representation, seconds); }
+        getSegmentByTime: function(seconds) { return createSegmentFromTemplateByTime(representation, seconds); },
+        getSegmentByUTCWallClockTime: function(utcMilliseconds) { return createSegmentFromTemplateByUTCWallClockTime(representation, utcMilliseconds); }
     };
 };
 
@@ -761,7 +838,10 @@ createSegmentFromTemplateByNumber = function(representation, number) {
         return baseUrl + replacedTokensUrl;
     };
     segment.getStartTime = function() {
-        return number * getSegmentDurationFromTemplate(representation);
+        return (number - getStartNumberFromTemplate(representation)) * getSegmentDurationFromTemplate(representation);
+    };
+    segment.getUTCWallClockStartTime = function() {
+        return getUTCWallClockStartTimeFromTemplate(representation) + Math.round(((number - getStartNumberFromTemplate(representation)) * getSegmentDurationFromTemplate(representation)) * 1000);
     };
     segment.getDuration = function() {
         // TODO: Verify
@@ -786,7 +866,8 @@ createSegmentFromTemplateByNumber = function(representation, number) {
 
 createSegmentFromTemplateByTime = function(representation, seconds) {
     var segmentDuration = getSegmentDurationFromTemplate(representation),
-        number = Math.floor(seconds / segmentDuration) + getStartNumberFromTemplate(representation),
+        startNumber = getStartNumberFromTemplate(representation) || 0,
+        number = Math.floor(seconds / segmentDuration) + startNumber,
         segment = createSegmentFromTemplateByNumber(representation, number);
 
     // If we're really close to the end time of the current segment (start time + duration),
@@ -798,6 +879,15 @@ createSegmentFromTemplateByTime = function(representation, seconds) {
     }
 
     return segment;
+};
+
+createSegmentFromTemplateByUTCWallClockTime = function(representation, unixTimeUtcMilliseconds) {
+    var wallClockStartTime = getUTCWallClockStartTimeFromTemplate(representation),
+        presentationTime;
+    if (Number.isNaN(wallClockStartTime)) { return null; }
+    presentationTime = (unixTimeUtcMilliseconds - wallClockStartTime)/1000;
+    if (Number.isNaN(presentationTime)) { return null; }
+    return createSegmentFromTemplateByTime(representation, presentationTime);
 };
 
 function getSegmentListForRepresentation(representation) {
@@ -1021,6 +1111,7 @@ var existy = require('../util/existy.js'),
     isArray = require('../util/isArray.js'),
     loadManifest = require('./loadManifest.js'),
     extendObject = require('../util/extendObject.js'),
+    parseMediaPresentationDuration = require('../dash/mpd/util.js').parseMediaPresentationDuration,
     EventDispatcherMixin = require('../events/EventDispatcherMixin.js'),
     getSegmentListForRepresentation = require('../dash/segments/getSegmentListForRepresentation.js'),
     getMpd = require('../dash/mpd/getMpd.js'),
@@ -1142,6 +1233,7 @@ ManifestController.prototype.__clearSourceUri = function clearSourceUri() {
  * Kick off loading the DASH MPD Manifest (served @ the ManifestController instance's __sourceUri)
  */
 ManifestController.prototype.load = function load() {
+    // TODO: Currently clearing & re-setting update interval after every request. Either use setTimeout() or only setup interval once
     var self = this;
     loadManifest(self.__sourceUri, function(data) {
         self.__manifest = data.manifestXml;
@@ -1166,7 +1258,7 @@ ManifestController.prototype.__clearCurrentUpdateInterval = function clearCurren
  */
 ManifestController.prototype.__setupUpdateInterval = function setupUpdateInterval() {
     // If there's already an updateInterval function, remove it.
-    if (this.__updateInterval) { self.__clearCurrentUpdateInterval(); }
+    if (this.__updateInterval) { this.__clearCurrentUpdateInterval(); }
     // If we shouldn't update, just bail.
     if (!this.getShouldUpdate()) { return; }
     var self = this,
@@ -1192,14 +1284,19 @@ ManifestController.prototype.getPlaylistType = function getPlaylistType() {
 };
 
 ManifestController.prototype.getUpdateRate = function getUpdateRate() {
-    var minimumUpdatePeriod = getMpd(this.__manifest).getMinimumUpdatePeriod();
-    return Number(minimumUpdatePeriod);
+    var minimumUpdatePeriodStr = getMpd(this.__manifest).getMinimumUpdatePeriod(),
+        minimumUpdatePeriod = parseMediaPresentationDuration(minimumUpdatePeriodStr);
+    return minimumUpdatePeriod;
 };
 
 ManifestController.prototype.getShouldUpdate = function getShouldUpdate() {
     var isDynamic = (this.getPlaylistType() === 'dynamic'),
         hasValidUpdateRate = (this.getUpdateRate() > 0);
     return (isDynamic && hasValidUpdateRate);
+};
+
+ManifestController.prototype.getMpd = function() {
+    return getMpd(this.__manifest);
 };
 
 /**
@@ -1272,6 +1369,13 @@ MediaSet.prototype.getTotalDuration = function getTotalDuration() {
     return totalDuration;
 };
 
+MediaSet.prototype.getUTCWallClockStartTime = function() {
+    var representation = this.__adaptationSet.getRepresentations()[0],
+        segmentList = getSegmentListForRepresentation(representation),
+        wallClockTime = segmentList.getUTCWallClockStartTime();
+    return wallClockTime;
+};
+
 // NOTE: Currently assuming these values will be consistent across all representations. While this is *usually*
 // the case, the spec *does* allow segments to not align across representations.
 // See, for example: @segmentAlignment AdaptationSet attribute, ISO IEC 23009-1 Sec. 5.3.3.2, pp 24-5.
@@ -1341,7 +1445,7 @@ MediaSet.prototype.getAvailableBandwidths = function getAvailableBandwidths() {
 };
 
 module.exports = ManifestController;
-},{"../dash/mpd/getMpd.js":5,"../dash/segments/getSegmentListForRepresentation.js":7,"../events/EventDispatcherMixin.js":9,"../util/existy.js":18,"../util/extendObject.js":19,"../util/isArray.js":20,"../util/isFunction.js":21,"../util/isString.js":23,"../util/truthy.js":24,"./MediaTypes.js":13,"./loadManifest.js":14}],13:[function(require,module,exports){
+},{"../dash/mpd/getMpd.js":5,"../dash/mpd/util.js":6,"../dash/segments/getSegmentListForRepresentation.js":7,"../events/EventDispatcherMixin.js":9,"../util/existy.js":18,"../util/extendObject.js":19,"../util/isArray.js":20,"../util/isFunction.js":21,"../util/isString.js":23,"../util/truthy.js":24,"./MediaTypes.js":13,"./loadManifest.js":14}],13:[function(require,module,exports){
 module.exports = ['video', 'audio'];
 },{}],14:[function(require,module,exports){
 'use strict';
@@ -2049,6 +2153,37 @@ var getInheritableElement = function(nodeName, shouldStopPred) {
     };
 };
 
+var getChildElementByNodeName = function(nodeName) {
+    if ((!isString(nodeName)) || nodeName === '') { return undefined; }
+    return function(elem) {
+        if (!existy(elem) || !isFunction(elem.getElementsByTagName)) { return undefined; }
+        var initialMatches = elem.getElementsByTagName(nodeName),
+            currentElem;
+        if (!existy(initialMatches) || initialMatches.length <= 0) { return undefined; }
+        currentElem = initialMatches[0];
+        return (currentElem.parentNode === elem) ? currentElem : undefined;
+    };
+};
+
+var getMultiLevelElementList = function(nodeName, shouldStopPred) {
+    if ((!isString(nodeName)) || nodeName === '') { return undefined; }
+    if (!isFunction(shouldStopPred)) { shouldStopPred = function() { return false; }; }
+    var getMatchingChildNodeFn = getChildElementByNodeName(nodeName);
+    return function(elem) {
+        var currentElem = elem,
+            multiLevelElemList = [],
+            matchingElem;
+        // TODO: Replace w/recursive fn?
+        while (existy(currentElem) && !shouldStopPred(currentElem)) {
+            matchingElem = getMatchingChildNodeFn(currentElem);
+            if (existy(matchingElem)) { multiLevelElemList.push(matchingElem); }
+            currentElem = currentElem.parentNode;
+        }
+
+        return multiLevelElemList.length > 0 ? multiLevelElemList : undefined;
+    };
+};
+
 // TODO: Implement me for BaseURL or use existing fn (See: mpd.js buildBaseUrl())
 /*var buildHierarchicallyStructuredValue = function(valueFn, buildFn, stopPred) {
 
@@ -2066,6 +2201,7 @@ xmlfun.getAncestors = getAncestors;
 xmlfun.getAttrFn = getAttrFn;
 xmlfun.preApplyArgsFn = preApplyArgsFn;
 xmlfun.getInheritableElement = getInheritableElement;
+xmlfun.getMultiLevelElementList = getMultiLevelElementList;
 
 module.exports = xmlfun;
 },{"./util/existy.js":18,"./util/isFunction.js":21,"./util/isString.js":23}]},{},[11]);

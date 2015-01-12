@@ -2,6 +2,9 @@
 
 var xmlfun = require('../../xmlfun.js'),
     util = require('./util.js'),
+    isArray = require('../../util/isArray.js'),
+    isFunction = require('../../util/isFunction.js'),
+    isString = require('../../util/isString.js'),
     parseRootUrl = util.parseRootUrl,
     createMpdObject,
     createPeriodObject,
@@ -20,7 +23,6 @@ var xmlfun = require('../../xmlfun.js'),
 var buildBaseUrl = function(xmlNode) {
     var elemHierarchy = [xmlNode].concat(xmlfun.getAncestors(xmlNode)),
         foundLocalBaseUrl = false;
-    //var baseUrls = _.map(elemHierarchy, function(elem) {
     var baseUrls = elemHierarchy.map(function(elem) {
         if (foundLocalBaseUrl) { return ''; }
         if (!elem.hasChildNodes()) { return ''; }
@@ -64,12 +66,15 @@ var getWidth = xmlfun.getInheritableAttribute('width'),
     getMimeType = xmlfun.getInheritableAttribute('mimeType'),
     getCodecs = xmlfun.getInheritableAttribute('codecs');
 
-var getSegmentTemplateXml = xmlfun.getInheritableElement('SegmentTemplate', doesntHaveCommonProperties);
+var getSegmentTemplateXmlList = xmlfun.getMultiLevelElementList('SegmentTemplate');
 
 // MPD Attr fns
 var getMediaPresentationDuration = xmlfun.getAttrFn('mediaPresentationDuration'),
     getType = xmlfun.getAttrFn('type'),
-    getMinimumUpdatePeriod = xmlfun.getAttrFn('minimumUpdatePeriod');
+    getMinimumUpdatePeriod = xmlfun.getAttrFn('minimumUpdatePeriod'),
+    getAvailabilityStartTime = xmlfun.getAttrFn('availabilityStartTime'),
+    getSuggestedPresentationDelay = xmlfun.getAttrFn('suggestedPresentationDelay'),
+    getTimeShiftBufferDepth = xmlfun.getAttrFn('timeShiftBufferDepth');
 
 // Representation Attr fns
 var getId = xmlfun.getAttrFn('id'),
@@ -91,7 +96,10 @@ createMpdObject = function(xmlNode) {
         getPeriods: xmlfun.preApplyArgsFn(getDescendantObjectsArrayByName, xmlNode, 'Period', createPeriodObject),
         getMediaPresentationDuration: xmlfun.preApplyArgsFn(getMediaPresentationDuration, xmlNode),
         getType: xmlfun.preApplyArgsFn(getType, xmlNode),
-        getMinimumUpdatePeriod: xmlfun.preApplyArgsFn(getMinimumUpdatePeriod, xmlNode)
+        getMinimumUpdatePeriod: xmlfun.preApplyArgsFn(getMinimumUpdatePeriod, xmlNode),
+        getAvailabilityStartTime: xmlfun.preApplyArgsFn(getAvailabilityStartTime, xmlNode),
+        getSuggestedPresentationDelay: xmlfun.preApplyArgsFn(getSuggestedPresentationDelay, xmlNode),
+        getTimeShiftBufferDepth: xmlfun.preApplyArgsFn(getTimeShiftBufferDepth, xmlNode)
     };
 };
 
@@ -113,7 +121,7 @@ createAdaptationSetObject = function(xmlNode) {
         // Descendants, Ancestors, & Siblings
         getRepresentations: xmlfun.preApplyArgsFn(getDescendantObjectsArrayByName, xmlNode, 'Representation', createRepresentationObject),
         getSegmentTemplate: function() {
-            return createSegmentTemplate(getSegmentTemplateXml(xmlNode));
+            return createSegmentTemplate(getSegmentTemplateXmlList(xmlNode));
         },
         getPeriod: xmlfun.preApplyArgsFn(getAncestorObjectByName, xmlNode, 'Period', createPeriodObject),
         getMpd: xmlfun.preApplyArgsFn(getAncestorObjectByName, xmlNode, 'MPD', createMpdObject),
@@ -127,7 +135,7 @@ createRepresentationObject = function(xmlNode) {
         xml: xmlNode,
         // Descendants, Ancestors, & Siblings
         getSegmentTemplate: function() {
-            return createSegmentTemplate(getSegmentTemplateXml(xmlNode));
+            return createSegmentTemplate(getSegmentTemplateXmlList(xmlNode));
         },
         getAdaptationSet: xmlfun.preApplyArgsFn(getAncestorObjectByName, xmlNode, 'AdaptationSet', createAdaptationSetObject),
         getPeriod: xmlfun.preApplyArgsFn(getAncestorObjectByName, xmlNode, 'Period', createPeriodObject),
@@ -144,20 +152,37 @@ createRepresentationObject = function(xmlNode) {
     };
 };
 
-createSegmentTemplate = function(xmlNode) {
+createSegmentTemplate = function(xmlArray) {
+    // Effectively a find function + a map function.
+    function getAttrFromXmlArray(attrGetterFn, xmlArray) {
+        if (!isArray(xmlArray)) { return undefined; }
+        if (!isFunction(attrGetterFn)) { return undefined; }
+
+        var i,
+            length = xmlArray.length,
+            currentAttrValue;
+
+        for (i=0; i<xmlArray.length; i++) {
+            currentAttrValue = attrGetterFn(xmlArray[i]);
+            if (isString(currentAttrValue) && currentAttrValue !== '') { return currentAttrValue; }
+        }
+
+        return undefined;
+    }
+
     return {
-        xml: xmlNode,
+        xml: xmlArray,
         // Descendants, Ancestors, & Siblings
-        getAdaptationSet: xmlfun.preApplyArgsFn(getAncestorObjectByName, xmlNode, 'AdaptationSet', createAdaptationSetObject),
-        getPeriod: xmlfun.preApplyArgsFn(getAncestorObjectByName, xmlNode, 'Period', createPeriodObject),
-        getMpd: xmlfun.preApplyArgsFn(getAncestorObjectByName, xmlNode, 'MPD', createMpdObject),
+        getAdaptationSet: xmlfun.preApplyArgsFn(getAncestorObjectByName, xmlArray[0], 'AdaptationSet', createAdaptationSetObject),
+        getPeriod: xmlfun.preApplyArgsFn(getAncestorObjectByName, xmlArray[0], 'Period', createPeriodObject),
+        getMpd: xmlfun.preApplyArgsFn(getAncestorObjectByName, xmlArray[0], 'MPD', createMpdObject),
         // Attrs
-        getInitialization: xmlfun.preApplyArgsFn(getInitialization, xmlNode),
-        getMedia: xmlfun.preApplyArgsFn(getMedia, xmlNode),
-        getDuration: xmlfun.preApplyArgsFn(getDuration, xmlNode),
-        getTimescale: xmlfun.preApplyArgsFn(getTimescale, xmlNode),
-        getPresentationTimeOffset: xmlfun.preApplyArgsFn(getPresentationTimeOffset, xmlNode),
-        getStartNumber: xmlfun.preApplyArgsFn(getStartNumber, xmlNode)
+        getInitialization: xmlfun.preApplyArgsFn(getAttrFromXmlArray, getInitialization, xmlArray),
+        getMedia: xmlfun.preApplyArgsFn(getAttrFromXmlArray, getMedia, xmlArray),
+        getDuration: xmlfun.preApplyArgsFn(getAttrFromXmlArray, getDuration, xmlArray),
+        getTimescale: xmlfun.preApplyArgsFn(getAttrFromXmlArray, getTimescale, xmlArray),
+        getPresentationTimeOffset: xmlfun.preApplyArgsFn(getAttrFromXmlArray, getPresentationTimeOffset, xmlArray),
+        getStartNumber: xmlfun.preApplyArgsFn(getAttrFromXmlArray, getStartNumber, xmlArray)
     };
 };
 
