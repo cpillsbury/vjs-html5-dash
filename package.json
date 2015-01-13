@@ -13,7 +13,7 @@
   },
   "dependencies": {
     "global": "^4.3.0",
-    "video.js": ">4.11.0"
+    "video.js": "^4.11.3"
   },
   "devDependencies": {
     "browserify": "latest",
@@ -22,9 +22,16 @@
     "grunt-contrib-clean": "latest",
     "grunt-contrib-jshint": "latest",
     "grunt-contrib-uglify": "latest",
-    "grunt-contrib-watch": "latest"
+    "grunt-contrib-watch": "latest",
+    "grunt-karma": "^0.9.0",
+    "karma": "^0.12.31",
+    "karma-browserify": "^2.0.0",
+    "karma-chrome-launcher": "^0.1.7",
+    "karma-firefox-launcher": "^0.1.4",
+    "karma-qunit": "^0.1.4",
+    "karma-safari-launcher": "^0.1.1"
   },
-  "main": "./dist/vjs-html5-dash.js",
+  "main": "./src/js/main.js",
   "author": "Christian Pillsbury",
   "license": "ISC"
 }

@@ -58,23 +58,29 @@ module.exports = function(grunt) {
                 src: '<%= browserify.dev.dest %>',
                 dest: 'dist/vjs-html5-dash-debug.min.js'
             }
-        }/*,
+        },
+        karma: {
+          unit: {
+            configFile: 'karma.conf.js'
+          }
+        },
         watch: {
-            files: 'src*//*',
-            tasks: ['default']
-        }*/
+          files: ['src*//*', 'test/**/*.js'],
+          tasks: ['karma']
+        }
     });
 
     grunt.loadNpmTasks('grunt-contrib-clean');
-    //grunt.loadNpmTasks('grunt-contrib-watch');
+    grunt.loadNpmTasks('grunt-contrib-watch');
     grunt.loadNpmTasks('grunt-contrib-uglify');
     grunt.loadNpmTasks('grunt-contrib-jshint');
     grunt.loadNpmTasks('grunt-browserify');
+    grunt.loadNpmTasks('grunt-karma');
 
     grunt.registerTask('default', ['clean', 'jshint', 'browserify:dist', 'uglify:dist']);
     grunt.registerTask('dev', ['clean', 'jshint', 'browserify:dev', 'uglify:dev']);
     grunt.registerTask('all', ['clean', 'jshint', 'browserify:dist', 'browserify:dev', 'uglify:dist', 'uglify:dev']);
-
+    grunt.registerTask('test', ['karma']);
     /*grunt.registerTask('default', ['clean', 'jshint', 'browserify:dist', 'uglify:dist', 'watch']);
     grunt.registerTask('dev', ['clean', 'jshint', 'browserify:dev', 'uglify:dev', 'watch']);
     grunt.registerTask('all', ['clean', 'jshint', 'browserify:dist', 'browserify:dev', 'uglify:dist', 'uglify:dev', 'watch']);*/
