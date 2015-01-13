@@ -5,7 +5,8 @@
   "keywords": [
     "require",
     "global",
-    "module"
+    "module",
+    "QUnit"
   ],
   "repository": {
     "type": "git",
