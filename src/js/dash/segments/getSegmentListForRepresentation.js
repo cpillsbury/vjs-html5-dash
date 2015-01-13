@@ -10,11 +10,13 @@ var existy = require('../../util/existy.js'),
     createSegmentFromTemplateByTime,
     createSegmentFromTemplateByUTCWallClockTime,
     getType,
+    getIsLive,
     getBandwidth,
     getWidth,
     getHeight,
     getTotalDurationFromTemplate,
     getUTCWallClockStartTimeFromTemplate,
+    getTimeShiftBufferDepth,
     getSegmentDurationFromTemplate,
     getTotalSegmentCountFromTemplate,
     getStartNumberFromTemplate,
@@ -35,6 +37,10 @@ getType = function(representation) {
     return (typeStr + ';codecs="' + processedCodecStr + '"');
 };
 
+getIsLive = function(representation) {
+    return (representation.getMpd().getType() === 'dynamic');
+};
+
 getBandwidth = function(representation) {
     var bandwidth = representation.getBandwidth();
     return existy(bandwidth) ? Number(bandwidth) : undefined;
@@ -53,15 +59,21 @@ getHeight = function(representation) {
 getTotalDurationFromTemplate = function(representation) {
     // TODO: Support period-relative presentation time
     var mediaPresentationDuration = representation.getMpd().getMediaPresentationDuration(),
-        parsedMediaPresentationDuration = existy(mediaPresentationDuration) ? Number(parseMediaPresentationDuration(mediaPresentationDuration)) : Number.NaN,
+        parsedMediaPresentationDuration = existy(mediaPresentationDuration) ? parseMediaPresentationDuration(mediaPresentationDuration) : Number.NaN,
         presentationTimeOffset = Number(representation.getSegmentTemplate().getPresentationTimeOffset()) || 0;
     return existy(parsedMediaPresentationDuration) ? Number(parsedMediaPresentationDuration - presentationTimeOffset) : Number.NaN;
 };
 
 getUTCWallClockStartTimeFromTemplate = function(representation) {
     var wallClockTimeStr = representation.getMpd().getAvailabilityStartTime(),
-        wallClockUnixTimeUtc = existy(wallClockTimeStr) ? parseDateTime(wallClockTimeStr) : Number.NaN;
+        wallClockUnixTimeUtc = parseDateTime(wallClockTimeStr);
     return wallClockUnixTimeUtc;
+};
+
+getTimeShiftBufferDepth = function(representation) {
+    var timeShiftBufferDepthStr = representation.getMpd().getTimeShiftBufferDepth(),
+        parsedTimeShiftBufferDepth = parseMediaPresentationDuration(timeShiftBufferDepthStr);
+    return parsedTimeShiftBufferDepth;
 };
 
 getSegmentDurationFromTemplate = function(representation) {
@@ -84,12 +96,14 @@ getEndNumberFromTemplate = function(representation) {
 createSegmentListFromTemplate = function(representation) {
     return {
         getType: xmlfun.preApplyArgsFn(getType, representation),
+        getIsLive: xmlfun.preApplyArgsFn(getIsLive, representation),
         getBandwidth: xmlfun.preApplyArgsFn(getBandwidth, representation),
         getHeight: xmlfun.preApplyArgsFn(getHeight, representation),
         getWidth: xmlfun.preApplyArgsFn(getWidth, representation),
         getTotalDuration: xmlfun.preApplyArgsFn(getTotalDurationFromTemplate, representation),
         getSegmentDuration: xmlfun.preApplyArgsFn(getSegmentDurationFromTemplate, representation),
         getUTCWallClockStartTime: xmlfun.preApplyArgsFn(getUTCWallClockStartTimeFromTemplate, representation),
+        getTimeShiftBufferDepth: xmlfun.preApplyArgsFn(getTimeShiftBufferDepth, representation),
         getTotalSegmentCount: xmlfun.preApplyArgsFn(getTotalSegmentCountFromTemplate, representation),
         getStartNumber: xmlfun.preApplyArgsFn(getStartNumberFromTemplate, representation),
         getEndNumber: xmlfun.preApplyArgsFn(getEndNumberFromTemplate, representation),

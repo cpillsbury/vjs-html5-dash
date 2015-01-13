@@ -23,6 +23,14 @@ var existy = require('./util/existy.js'),
     MIN_DESIRED_BUFFER_SIZE = 20,
     MAX_DESIRED_BUFFER_SIZE = 40;
 
+function hasValue(object, value) {
+    if (!existy(object) || !existy(value)) { return false; }
+    for (var prop in object) {
+        if (object.hasOwnProperty(prop) && (object[prop] === value)) { return true; }
+    }
+    return false;
+}
+
 /**
  *
  * MediaTypeLoader coordinates between segment downloading and adding segments to the MSE source buffer for a given media type (e.g. 'audio' or 'video').
@@ -45,7 +53,28 @@ function MediaTypeLoader(segmentLoader, sourceBufferDataQueue, mediaType, tech) 
  */
 MediaTypeLoader.prototype.eventList = {
     RECHECK_SEGMENT_LOADING: 'recheckSegmentLoading',
-    RECHECK_CURRENT_SEGMENT_LIST: 'recheckCurrentSegmentList'
+    RECHECK_CURRENT_SEGMENT_LIST: 'recheckCurrentSegmentList',
+    LOAD_STATE_CHANGED: 'loadStateChanged'
+};
+
+MediaTypeLoader.prototype.loadStates = {
+    NOT_LOADING: -10,
+    WAITING_TO_CHECK: 0,
+    CHECKING_STARTED: 10,
+    WAITING_TO_DOWNLOAD: 20,
+    DOWNLOAD_STARTED: 30,
+    ADD_TO_BUFFER_STARTED: 40,
+    LOADING_COMPLETE: 50
+};
+
+MediaTypeLoader.prototype.getLoadState = function() {
+    return this.__loadState;
+};
+
+MediaTypeLoader.prototype.setLoadState = function(loadState) {
+    if (loadState === this.__loadState || !hasValue(this.loadStates, loadState)) { return; }
+    this.__loadState = loadState;
+    this.trigger({ type:this.eventList.LOAD_STATE_CHANGED, target:this, data:loadState });
 };
 
 MediaTypeLoader.prototype.getMediaType = function() { return this.__mediaType; };
@@ -76,6 +105,12 @@ MediaTypeLoader.prototype.startLoadingSegmentsForStaticPlaylist = function() {
 
     this.on(this.eventList.RECHECK_SEGMENT_LOADING, this.__recheckSegmentLoadingHandler);
 
+    if (this.__segmentLoader.getCurrentSegmentList().getIsLive()) {
+        this.one(this.eventList.RECHECK_SEGMENT_LOADING, function(event) {
+            self.__tech.setCurrentTime(self.__sourceBufferDataQueue.getBufferedTimeRangeList().getTimeRangeByIndex(0).getStart());
+        });
+    }
+
     // Manually check on loading segments the first time around.
     this.__checkSegmentLoading(MIN_DESIRED_BUFFER_SIZE, MAX_DESIRED_BUFFER_SIZE);
 };
@@ -103,32 +138,34 @@ MediaTypeLoader.prototype.__checkSegmentLoading = function(minDesiredBufferSize,
         sourceBufferDataQueue = self.__sourceBufferDataQueue,
         currentTime = tech.currentTime(),
         currentBufferSize,
-        segmentDuration = segmentLoader.getCurrentSegmentList().getSegmentDuration(),
-        totalDuration = segmentLoader.getCurrentSegmentList().getTotalDuration(),
-        downloadPoint = currentTime,
+        currentSegmentList = segmentLoader.getCurrentSegmentList(),
+        segmentDuration = currentSegmentList.getSegmentDuration(),
+        totalDuration = currentSegmentList.getTotalDuration(),
         downloadRoundTripTime,
         segmentDownloadDelay,
         timeRangeList = sourceBufferDataQueue.getBufferedTimeRangeListAlignedToSegmentDuration(segmentDuration),
-        timeRangeObj = timeRangeList.getTimeRangeByTime(currentTime),
-        previousTimeRangeObj,
-        i,
-        length;
+        segmentToDownload = self.getNextSegmentToLoad(currentTime, currentSegmentList, timeRangeList),
+        downloadPoint = segmentToDownload.getStartTime();
 
-    // Find the true buffer edge, since the MSE buffer time ranges might be falsely reporting that there are
-    // multiple time ranges when they are temporally adjacent.
-    if (timeRangeObj) {
-        downloadPoint = timeRangeObj.getEnd();
-        length = timeRangeList.getLength();
-        i = timeRangeObj.getIndex() + 1;
-        for (;i<length;i++) {
-            previousTimeRangeObj = timeRangeObj;
-            timeRangeObj = timeRangeList.getTimeRangeByIndex(i);
-            downloadPoint = previousTimeRangeObj.getEnd();
-            if ((timeRangeObj.getStart() - downloadPoint) > 0.003) { break; }
+    currentBufferSize = existy(timeRangeList) && timeRangeList.getLength() > 0 ? downloadPoint - currentTime : 0;
+
+    // TODO: Ugly separation of live vs. VOD. Refactor.
+    if (currentSegmentList.getIsLive()) {
+        if (existy(timeRangeList) && timeRangeList.getLength() <= 0) {
+            self.__loadSegmentAtTime(downloadPoint);
+        } else {
+            downloadRoundTripTime = segmentLoader.getLastDownloadRoundTripTimeSpan();
+            segmentDownloadDelay = segmentDuration - downloadRoundTripTime;
+            console.log('segmentDownloadDelay: ' + segmentDownloadDelay);
+            setTimeout(function() {
+                segmentToDownload = self.getNextSegmentToLoad(currentTime, currentSegmentList, timeRangeList);
+                downloadPoint = segmentToDownload.getStartTime();
+                console.log('downloadPoint: ' + downloadPoint);
+                self.__loadSegmentAtTime(downloadPoint);
+            }, Math.floor(segmentDownloadDelay * 1000));
         }
+        return;
     }
-
-    currentBufferSize = downloadPoint - currentTime;
 
     // Local function used to notify that we should recheck segment loading. Used when we don't need to currently load segments.
     function deferredRecheckNotification() {
@@ -171,9 +208,6 @@ MediaTypeLoader.prototype.__checkSegmentLoading = function(minDesiredBufferSize,
             // Response: Download the segment that would immediately follow the end of the buffer (relative to the current
             //           time), but wait to download at the rate of playback (segment duration - time to download).
             setTimeout(function() {
-                /*currentTime = tech.currentTime();
-                currentBufferSize = sourceBufferDataQueue.determineAmountBufferedFromTime(currentTime);
-                downloadPoint = (currentTime + currentBufferSize) + (segmentDuration / 2);*/
                 self.__loadSegmentAtTime(downloadPoint);
             }, Math.floor(segmentDownloadDelay * 1000));
         }
@@ -204,6 +238,7 @@ MediaTypeLoader.prototype.__loadSegmentAtTime = function loadSegmentAtTime(prese
     if (!hasNextSegment) { return hasNextSegment; }
 
     segmentLoader.one(segmentLoader.eventList.SEGMENT_LOADED, function segmentLoadedHandler(event) {
+        console.log('SUCCESSFUL LOADING!');
         sourceBufferDataQueue.one(sourceBufferDataQueue.eventList.QUEUE_EMPTY, function(event) {
             // Once we've completed downloading and buffering the segment, dispatch event to notify that we should recheck
             // whether or not we should load another segment and, if so, which. (See: __checkSegmentLoading() method, above)
@@ -213,6 +248,37 @@ MediaTypeLoader.prototype.__loadSegmentAtTime = function loadSegmentAtTime(prese
     });
 
     return hasNextSegment;
+};
+
+MediaTypeLoader.prototype.getNextSegmentToLoad = function(currentTime, segmentList, sourceBufferTimeRangeList) {
+    var timeRangeObj = sourceBufferTimeRangeList.getTimeRangeByTime(currentTime),
+        previousTimeRangeObj,
+        i,
+        length;
+
+    if (!existy(timeRangeObj)) {
+        if (segmentList.getIsLive()) {
+            var nowSegment = segmentList.getSegmentByUTCWallClockTime(Date.now());
+            return segmentList.getSegmentByNumber(nowSegment.getNumber() - 1);
+        } else {
+            return segmentList.getSegmentByTime(currentTime);
+        }
+    }
+
+    // Find the true buffer edge, since the MSE buffer time ranges might be falsely reporting that there are
+    // multiple time ranges when they are temporally adjacent.
+    length = sourceBufferTimeRangeList.getLength();
+    i = timeRangeObj.getIndex() + 1;
+    for (;i<length;i++) {
+        previousTimeRangeObj = timeRangeObj;
+        timeRangeObj = sourceBufferTimeRangeList.getTimeRangeByIndex(i);
+        if ((timeRangeObj.getStart() - previousTimeRangeObj.getEnd()) > 0.003) {
+            return segmentList.getSegmentByTime(previousTimeRangeObj.getEnd());
+        }
+    }
+
+    // If we're here, either a) there was only one timeRange in the list or b) all of the timeRanges in the list were adjacent.
+    return segmentList.getSegmentByTime(timeRangeObj.getEnd());
 };
 
 // Add event dispatcher functionality to prototype.
@@ -719,11 +785,13 @@ var existy = require('../../util/existy.js'),
     createSegmentFromTemplateByTime,
     createSegmentFromTemplateByUTCWallClockTime,
     getType,
+    getIsLive,
     getBandwidth,
     getWidth,
     getHeight,
     getTotalDurationFromTemplate,
     getUTCWallClockStartTimeFromTemplate,
+    getTimeShiftBufferDepth,
     getSegmentDurationFromTemplate,
     getTotalSegmentCountFromTemplate,
     getStartNumberFromTemplate,
@@ -744,6 +812,10 @@ getType = function(representation) {
     return (typeStr + ';codecs="' + processedCodecStr + '"');
 };
 
+getIsLive = function(representation) {
+    return (representation.getMpd().getType() === 'dynamic');
+};
+
 getBandwidth = function(representation) {
     var bandwidth = representation.getBandwidth();
     return existy(bandwidth) ? Number(bandwidth) : undefined;
@@ -762,15 +834,21 @@ getHeight = function(representation) {
 getTotalDurationFromTemplate = function(representation) {
     // TODO: Support period-relative presentation time
     var mediaPresentationDuration = representation.getMpd().getMediaPresentationDuration(),
-        parsedMediaPresentationDuration = existy(mediaPresentationDuration) ? Number(parseMediaPresentationDuration(mediaPresentationDuration)) : Number.NaN,
+        parsedMediaPresentationDuration = existy(mediaPresentationDuration) ? parseMediaPresentationDuration(mediaPresentationDuration) : Number.NaN,
         presentationTimeOffset = Number(representation.getSegmentTemplate().getPresentationTimeOffset()) || 0;
     return existy(parsedMediaPresentationDuration) ? Number(parsedMediaPresentationDuration - presentationTimeOffset) : Number.NaN;
 };
 
 getUTCWallClockStartTimeFromTemplate = function(representation) {
     var wallClockTimeStr = representation.getMpd().getAvailabilityStartTime(),
-        wallClockUnixTimeUtc = existy(wallClockTimeStr) ? parseDateTime(wallClockTimeStr) : Number.NaN;
+        wallClockUnixTimeUtc = parseDateTime(wallClockTimeStr);
     return wallClockUnixTimeUtc;
+};
+
+getTimeShiftBufferDepth = function(representation) {
+    var timeShiftBufferDepthStr = representation.getMpd().getTimeShiftBufferDepth(),
+        parsedTimeShiftBufferDepth = parseMediaPresentationDuration(timeShiftBufferDepthStr);
+    return parsedTimeShiftBufferDepth;
 };
 
 getSegmentDurationFromTemplate = function(representation) {
@@ -793,12 +871,14 @@ getEndNumberFromTemplate = function(representation) {
 createSegmentListFromTemplate = function(representation) {
     return {
         getType: xmlfun.preApplyArgsFn(getType, representation),
+        getIsLive: xmlfun.preApplyArgsFn(getIsLive, representation),
         getBandwidth: xmlfun.preApplyArgsFn(getBandwidth, representation),
         getHeight: xmlfun.preApplyArgsFn(getHeight, representation),
         getWidth: xmlfun.preApplyArgsFn(getWidth, representation),
         getTotalDuration: xmlfun.preApplyArgsFn(getTotalDurationFromTemplate, representation),
         getSegmentDuration: xmlfun.preApplyArgsFn(getSegmentDurationFromTemplate, representation),
         getUTCWallClockStartTime: xmlfun.preApplyArgsFn(getUTCWallClockStartTimeFromTemplate, representation),
+        getTimeShiftBufferDepth: xmlfun.preApplyArgsFn(getTimeShiftBufferDepth, representation),
         getTotalSegmentCount: xmlfun.preApplyArgsFn(getTotalSegmentCountFromTemplate, representation),
         getStartNumber: xmlfun.preApplyArgsFn(getStartNumberFromTemplate, representation),
         getEndNumber: xmlfun.preApplyArgsFn(getEndNumberFromTemplate, representation),
