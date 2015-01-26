@@ -108,6 +108,8 @@ function PlaylistLoader(manifestController, mediaSource, tech) {
     function changePlaybackRateEventsHandler(event) {
         var readyState = tech.el().readyState,
             playbackRate = (readyState === 4) ? 1 : 0;
+        console.log('In PlaylistLoader Playback Rate Handler\n\n');
+        console.log('playbackRate: ' + playbackRate + ', readyState: ' + readyState);
         tech.setPlaybackRate(playbackRate);
     }
 

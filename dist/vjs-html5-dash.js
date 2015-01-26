@@ -91,7 +91,8 @@ MediaTypeLoader.prototype.startLoadingSegments = function() {
 };
 
 MediaTypeLoader.prototype.startLoadingSegmentsForStaticPlaylist = function() {
-    var self = this;
+    var self = this,
+        nowUTC;
 
     // Event listener for rechecking segment loading. This event is fired whenever a segment has been successfully
     // downloaded and added to the buffer or, if not currently loading segments (because the buffer is sufficiently full
@@ -106,8 +107,13 @@ MediaTypeLoader.prototype.startLoadingSegmentsForStaticPlaylist = function() {
     this.on(this.eventList.RECHECK_SEGMENT_LOADING, this.__recheckSegmentLoadingHandler);
 
     if (this.__segmentLoader.getCurrentSegmentList().getIsLive()) {
+        nowUTC = Date.now();
         this.one(this.eventList.RECHECK_SEGMENT_LOADING, function(event) {
-            self.__tech.setCurrentTime(self.__sourceBufferDataQueue.getBufferedTimeRangeList().getTimeRangeByIndex(0).getStart());
+            var seg = self.__segmentLoader.getCurrentSegmentList().getSegmentByUTCWallClockTime(nowUTC),
+                segUTCStartTime = seg.getUTCWallClockStartTime(),
+                timeOffset = (nowUTC - segUTCStartTime)/1000,
+                seekToTime = self.__sourceBufferDataQueue.getBufferedTimeRangeListAlignedToSegmentDuration(seg.getDuration()).getTimeRangeByIndex(0).getStart() + timeOffset;
+            self.__tech.setCurrentTime(seekToTime);
         });
     }
 
@@ -156,11 +162,9 @@ MediaTypeLoader.prototype.__checkSegmentLoading = function(minDesiredBufferSize,
         } else {
             downloadRoundTripTime = segmentLoader.getLastDownloadRoundTripTimeSpan();
             segmentDownloadDelay = segmentDuration - downloadRoundTripTime;
-            console.log('segmentDownloadDelay: ' + segmentDownloadDelay);
             setTimeout(function() {
                 segmentToDownload = self.getNextSegmentToLoad(currentTime, currentSegmentList, timeRangeList);
                 downloadPoint = segmentToDownload.getStartTime();
-                console.log('downloadPoint: ' + downloadPoint);
                 self.__loadSegmentAtTime(downloadPoint);
             }, Math.floor(segmentDownloadDelay * 1000));
         }
@@ -238,7 +242,6 @@ MediaTypeLoader.prototype.__loadSegmentAtTime = function loadSegmentAtTime(prese
     if (!hasNextSegment) { return hasNextSegment; }
 
     segmentLoader.one(segmentLoader.eventList.SEGMENT_LOADED, function segmentLoadedHandler(event) {
-        console.log('SUCCESSFUL LOADING!');
         sourceBufferDataQueue.one(sourceBufferDataQueue.eventList.QUEUE_EMPTY, function(event) {
             // Once we've completed downloading and buffering the segment, dispatch event to notify that we should recheck
             // whether or not we should load another segment and, if so, which. (See: __checkSegmentLoading() method, above)
@@ -250,6 +253,7 @@ MediaTypeLoader.prototype.__loadSegmentAtTime = function loadSegmentAtTime(prese
     return hasNextSegment;
 };
 
+// TODO: No instance-level dependencies. Make independent function?
 MediaTypeLoader.prototype.getNextSegmentToLoad = function(currentTime, segmentList, sourceBufferTimeRangeList) {
     var timeRangeObj = sourceBufferTimeRangeList.getTimeRangeByTime(currentTime),
         previousTimeRangeObj,
@@ -396,6 +400,8 @@ function PlaylistLoader(manifestController, mediaSource, tech) {
     function changePlaybackRateEventsHandler(event) {
         var readyState = tech.el().readyState,
             playbackRate = (readyState === 4) ? 1 : 0;
+        console.log('In PlaylistLoader Playback Rate Handler\n\n');
+        console.log('playbackRate: ' + playbackRate + ', readyState: ' + readyState);
         tech.setPlaybackRate(playbackRate);
     }
 
@@ -675,7 +681,7 @@ getDescendantObjectsArrayByName = function(parentXml, tagName, mapFn) {
 };
 
 // TODO: Move to xmlfun or own module.
-getAncestorObjectByName = function(xmlNode, tagName, mapFn) {
+getAncestorObjectByName = function getAncestorObjectByName(xmlNode, tagName, mapFn) {
     if (!tagName || !xmlNode || !xmlNode.parentNode) { return null; }
     if (!xmlNode.parentNode.hasOwnProperty('nodeName')) { return null; }
 

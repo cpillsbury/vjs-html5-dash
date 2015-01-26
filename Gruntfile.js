@@ -81,7 +81,4 @@ module.exports = function(grunt) {
     grunt.registerTask('dev', ['clean', 'jshint', 'browserify:dev', 'uglify:dev']);
     grunt.registerTask('all', ['clean', 'jshint', 'browserify:dist', 'browserify:dev', 'uglify:dist', 'uglify:dev']);
     grunt.registerTask('test', ['karma']);
-    /*grunt.registerTask('default', ['clean', 'jshint', 'browserify:dist', 'uglify:dist', 'watch']);
-    grunt.registerTask('dev', ['clean', 'jshint', 'browserify:dev', 'uglify:dev', 'watch']);
-    grunt.registerTask('all', ['clean', 'jshint', 'browserify:dist', 'browserify:dev', 'uglify:dist', 'uglify:dev', 'watch']);*/
 };
