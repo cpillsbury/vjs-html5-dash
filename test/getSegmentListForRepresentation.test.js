@@ -117,11 +117,8 @@ QUnit.test('getType() handles non-compliant preceeding 0\'s in codec', function(
     assert.strictEqual(type, 'audio/mp4;codecs="mp4a.40.2"', 'getType() handles non-compliant preceeding 0\'s in codec!');
 });
 
+// TODO: Figure out browser inconsistencies with mpd
 QUnit.test('getIsLive() returns expected value', function(assert) {
-    // NOTE: FAILURE APPEARS TO BE OCCURRING IN INTERNAL fn getAncestorObjectByName() found in getMpd.js.
-    /*var staticRep = getMpd(mpdExampleStaticSegmentTemplateXML).getPeriods()[0].getAdaptationSetByType('video').getRepresentations()[0];
-    assert.ok(staticRep.getMpd(), 'mpd exists');*/
-
     // NOTE: GETTING INCONSITENCIES ACROSS BROWSERS (working in Chrome/Chrome-Canary but not in Safari/FF)
     var isLiveFalse = getSegmentListForRepresentation(exampleStaticRepresentation).getIsLive();
     assert.ok(!isLiveFalse, 'getIsLive() returns expected value!');
@@ -129,3 +126,32 @@ QUnit.test('getIsLive() returns expected value', function(assert) {
     var isLiveTrue = getSegmentListForRepresentation(exampleDynamicRepresentation).getIsLive();
     assert.ok(isLiveTrue, 'getIsLive() returns expected value!');
 });
+
+QUnit.test('getBandwidth() returns expected value', function(assert) {
+    var bandwidth = getSegmentListForRepresentation(exampleStaticRepresentation).getBandwidth();
+    assert.strictEqual(typeof bandwidth, 'number', 'getBandwidth() returns expected type');
+    assert.strictEqual(bandwidth, 3000000, 'getBandwidth() returns expected value');
+});
+
+QUnit.test('getHeight() returns expected value', function(assert) {
+    var height = getSegmentListForRepresentation(exampleStaticRepresentation).getHeight();
+    assert.strictEqual(typeof height, 'number', 'getHeight() returns expected type');
+    assert.strictEqual(height, 720, 'getHeight() returns expected value');
+});
+
+QUnit.test('getWidth() returns expected value', function(assert) {
+    var width = getSegmentListForRepresentation(exampleStaticRepresentation).getWidth();
+    assert.strictEqual(typeof width, 'number', 'getWidth() returns expected type');
+    assert.strictEqual(width, 1280, 'getWidth() returns expected value');
+});
+
+QUnit.test('getTotalDuration() returns expected value', function(assert) {
+    /*var parser = new DOMParser();
+    var xml = parser.parseFromString(mpdExampleStaticSegmentTemplateString, 'text/xml');
+    var representation = getMpd(xml).getPeriods()[0].getAdaptationSetByType('video').getRepresentations()[0];
+    var value = getSegmentListForRepresentation(representation).getTotalDuration();*/
+    var value = getSegmentListForRepresentation(exampleStaticRepresentation).getTotalDuration();
+    assert.strictEqual(typeof value, 'number', 'getTotalDuration() returns expected type');
+    assert.strictEqual(value, 260.266, 'getTotalDuration() returns expected value');
+});
+

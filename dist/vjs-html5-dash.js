@@ -683,10 +683,10 @@ getDescendantObjectsArrayByName = function(parentXml, tagName, mapFn) {
 // TODO: Move to xmlfun or own module.
 getAncestorObjectByName = function getAncestorObjectByName(xmlNode, tagName, mapFn) {
     if (!tagName || !xmlNode || !xmlNode.parentNode) { return null; }
-    if (!xmlNode.parentNode.hasOwnProperty('nodeName')) { return null; }
+    if (!xmlNode.parentNode.nodeName) { return null; }
 
     if (xmlNode.parentNode.nodeName === tagName) {
-        return (typeof mapFn === 'function') ? mapFn(xmlNode.parentNode) : xmlNode.parentNode;
+        return isFunction(mapFn) ? mapFn(xmlNode.parentNode) : xmlNode.parentNode;
     }
     return getAncestorObjectByName(xmlNode.parentNode, tagName, mapFn);
 };
