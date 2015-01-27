@@ -6,7 +6,8 @@
     "require",
     "global",
     "module",
-    "QUnit"
+    "QUnit",
+    "sinon"
   ],
   "repository": {
     "type": "git",
@@ -30,7 +31,9 @@
     "karma-chrome-launcher": "^0.1.7",
     "karma-firefox-launcher": "^0.1.4",
     "karma-qunit": "^0.1.4",
-    "karma-safari-launcher": "^0.1.1"
+    "karma-safari-launcher": "^0.1.1",
+    "karma-sinon": "^1.0.4",
+    "sinon": "^1.12.2"
   },
   "main": "./src/js/main.js",
   "author": "Christian Pillsbury",
