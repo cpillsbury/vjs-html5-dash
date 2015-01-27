@@ -189,9 +189,9 @@ createSegmentFromTemplateByTime = function(representation, seconds) {
 createSegmentFromTemplateByUTCWallClockTime = function(representation, unixTimeUtcMilliseconds) {
     var wallClockStartTime = getUTCWallClockStartTimeFromTemplate(representation),
         presentationTime;
-    if (Number.isNaN(wallClockStartTime)) { return null; }
+    if (isNaN(wallClockStartTime)) { return null; }
     presentationTime = (unixTimeUtcMilliseconds - wallClockStartTime)/1000;
-    if (Number.isNaN(presentationTime)) { return null; }
+    if (isNaN(presentationTime)) { return null; }
     return createSegmentFromTemplateByTime(representation, presentationTime);
 };
 

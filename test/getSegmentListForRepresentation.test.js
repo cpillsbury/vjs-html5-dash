@@ -117,9 +117,7 @@ QUnit.test('getType() handles non-compliant preceeding 0\'s in codec', function(
     assert.strictEqual(type, 'audio/mp4;codecs="mp4a.40.2"', 'getType() handles non-compliant preceeding 0\'s in codec!');
 });
 
-// TODO: Figure out browser inconsistencies with mpd
 QUnit.test('getIsLive() returns expected value', function(assert) {
-    // NOTE: GETTING INCONSITENCIES ACROSS BROWSERS (working in Chrome/Chrome-Canary but not in Safari/FF)
     var isLiveFalse = getSegmentListForRepresentation(exampleStaticRepresentation).getIsLive();
     assert.ok(!isLiveFalse, 'getIsLive() returns expected value!');
 
@@ -146,12 +144,150 @@ QUnit.test('getWidth() returns expected value', function(assert) {
 });
 
 QUnit.test('getTotalDuration() returns expected value', function(assert) {
-    /*var parser = new DOMParser();
-    var xml = parser.parseFromString(mpdExampleStaticSegmentTemplateString, 'text/xml');
-    var representation = getMpd(xml).getPeriods()[0].getAdaptationSetByType('video').getRepresentations()[0];
-    var value = getSegmentListForRepresentation(representation).getTotalDuration();*/
     var value = getSegmentListForRepresentation(exampleStaticRepresentation).getTotalDuration();
     assert.strictEqual(typeof value, 'number', 'getTotalDuration() returns expected type');
     assert.strictEqual(value, 260.266, 'getTotalDuration() returns expected value');
 });
+
+QUnit.test('getSegmentDuration() returns expected value', function(assert) {
+    var value = getSegmentListForRepresentation(exampleStaticRepresentation).getSegmentDuration();
+    assert.strictEqual(typeof value, 'number', 'getSegmentDuration() returns expected type');
+    assert.strictEqual(value, 4, 'getSegmentDuration() returns expected value');
+});
+
+QUnit.test('getUTCWallClockStartTime() returns expected value', function(assert) {
+    var value = getSegmentListForRepresentation(exampleStaticRepresentation).getUTCWallClockStartTime();
+    assert.strictEqual(typeof value, 'number', 'getUTCWallClockStartTime() returns expected type');
+    assert.strictEqual(value, 1346835600000, 'getUTCWallClockStartTime() returns expected value');
+});
+
+QUnit.test('getTimeShiftBufferDepth() returns expected value', function(assert) {
+    var value = getSegmentListForRepresentation(exampleDynamicRepresentation).getTimeShiftBufferDepth();
+    assert.strictEqual(typeof value, 'number', 'getTimeShiftBufferDepth() returns expected type');
+    assert.strictEqual(value, 600, 'getTimeShiftBufferDepth() returns expected value');
+});
+
+QUnit.test('getTotalSegmentCount() returns expected value', function(assert) {
+    var value = getSegmentListForRepresentation(exampleStaticRepresentation).getTotalSegmentCount();
+    assert.strictEqual(typeof value, 'number', 'getTotalSegmentCount() returns expected type');
+    assert.strictEqual(value, 66, 'getTotalSegmentCount() returns expected value');
+});
+
+QUnit.test('getStartNumber() returns expected value', function(assert) {
+    var value = getSegmentListForRepresentation(exampleStaticRepresentation).getStartNumber();
+    assert.strictEqual(typeof value, 'number', 'getStartNumber() returns expected type');
+    assert.strictEqual(value, 0, 'getStartNumber() returns expected value');
+});
+
+QUnit.test('getEndNumber() returns expected value', function(assert) {
+    var value = getSegmentListForRepresentation(exampleStaticRepresentation).getEndNumber();
+    assert.strictEqual(typeof value, 'number', 'getEndNumber() returns expected type');
+    assert.strictEqual(value, 65, 'getEndNumber() returns expected value');
+});
+
+QUnit.test('getInitialization() returns object with expected methods', function(assert) {
+    var initialization = getSegmentListForRepresentation(exampleStaticRepresentation).getInitialization();
+    assert.strictEqual(typeof initialization.getUrl, 'function', 'getUrl() is a function!');
+});
+
+QUnit.test('getSegmentByNumber() returns object with expected methods', function(assert) {
+    var segment = getSegmentListForRepresentation(exampleStaticRepresentation).getSegmentByNumber(0);
+    assert.strictEqual(typeof segment.getUrl, 'function', 'getUrl() is a function!');
+    assert.strictEqual(typeof segment.getStartTime, 'function', 'getStartTime() is a function!');
+    assert.strictEqual(typeof segment.getUTCWallClockStartTime, 'function', 'getUTCWallClockStartTime() is a function!');
+    assert.strictEqual(typeof segment.getDuration, 'function', 'getDuration() is a function!');
+    assert.strictEqual(typeof segment.getNumber, 'function', 'getNumber() is a function!');
+});
+
+QUnit.test('getSegmentByTime() returns object with expected methods', function(assert) {
+    var segment = getSegmentListForRepresentation(exampleStaticRepresentation).getSegmentByTime(0);
+    assert.strictEqual(typeof segment.getUrl, 'function', 'getUrl() is a function!');
+    assert.strictEqual(typeof segment.getStartTime, 'function', 'getStartTime() is a function!');
+    assert.strictEqual(typeof segment.getUTCWallClockStartTime, 'function', 'getUTCWallClockStartTime() is a function!');
+    assert.strictEqual(typeof segment.getDuration, 'function', 'getDuration() is a function!');
+    assert.strictEqual(typeof segment.getNumber, 'function', 'getNumber() is a function!');
+});
+
+QUnit.test('getSegmentByUTCWallClockTime() returns object with expected methods', function(assert) {
+    var segment = getSegmentListForRepresentation(exampleStaticRepresentation).getSegmentByUTCWallClockTime(1346835600000);
+    assert.strictEqual(typeof segment.getUrl, 'function', 'getUrl() is a function!');
+    assert.strictEqual(typeof segment.getStartTime, 'function', 'getStartTime() is a function!');
+    assert.strictEqual(typeof segment.getUTCWallClockStartTime, 'function', 'getUTCWallClockStartTime() is a function!');
+    assert.strictEqual(typeof segment.getDuration, 'function', 'getDuration() is a function!');
+    assert.strictEqual(typeof segment.getNumber, 'function', 'getNumber() is a function!');
+});
+
+QUnit.test('getSegmentByNumber().getStartTime() returns expected value', function(assert) {
+    var value = getSegmentListForRepresentation(exampleStaticRepresentation).getSegmentByNumber(0).getStartTime();
+    assert.strictEqual(typeof value, 'number', 'getStartTime() returns expected type!');
+    assert.strictEqual(value, 0, 'getStartTime() returns expected value!');
+});
+
+QUnit.test('getSegmentByTime().getStartTime() returns expected value', function(assert) {
+    var value = getSegmentListForRepresentation(exampleStaticRepresentation).getSegmentByTime(0).getStartTime();
+    assert.strictEqual(typeof value, 'number', 'getStartTime() returns expected type!');
+    assert.strictEqual(value, 0, 'getStartTime() returns expected value!');
+});
+
+QUnit.test('getSegmentByUTCWallClockTime().getStartTime() returns expected value', function(assert) {
+    var value = getSegmentListForRepresentation(exampleStaticRepresentation).getSegmentByUTCWallClockTime(1346835600000).getStartTime();
+    assert.strictEqual(typeof value, 'number', 'getStartTime() returns expected type!');
+    assert.strictEqual(value, 0, 'getStartTime() returns expected value!');
+});
+
+QUnit.test('getSegmentByNumber().getUTCWallClockStartTime() returns expected value', function(assert) {
+    var value = getSegmentListForRepresentation(exampleStaticRepresentation).getSegmentByNumber(0).getUTCWallClockStartTime();
+    assert.strictEqual(typeof value, 'number', 'getUTCWallClockStartTime() returns expected type!');
+    assert.strictEqual(value, 1346835600000, 'getUTCWallClockStartTime() returns expected value!');
+});
+
+QUnit.test('getSegmentByTime().getUTCWallClockStartTime() returns expected value', function(assert) {
+    var value = getSegmentListForRepresentation(exampleStaticRepresentation).getSegmentByTime(0).getUTCWallClockStartTime();
+    assert.strictEqual(typeof value, 'number', 'getUTCWallClockStartTime() returns expected type!');
+    assert.strictEqual(value, 1346835600000, 'getUTCWallClockStartTime() returns expected value!');
+});
+
+QUnit.test('getSegmentByUTCWallClockTime().getUTCWallClockStartTime() returns expected value', function(assert) {
+    var value = getSegmentListForRepresentation(exampleStaticRepresentation).getSegmentByUTCWallClockTime(1346835600000).getUTCWallClockStartTime();
+    assert.strictEqual(typeof value, 'number', 'getUTCWallClockStartTime() returns expected type!');
+    assert.strictEqual(value, 1346835600000, 'getUTCWallClockStartTime() returns expected value!');
+});
+
+QUnit.test('getSegmentByNumber().getNumber() returns expected value', function(assert) {
+    var value = getSegmentListForRepresentation(exampleStaticRepresentation).getSegmentByNumber(0).getNumber();
+    assert.strictEqual(typeof value, 'number', 'getNumber() returns expected type!');
+    assert.strictEqual(value, 0, 'getNumber() returns expected value!');
+});
+
+QUnit.test('getSegmentByTime().getNumber() returns expected value', function(assert) {
+    var value = getSegmentListForRepresentation(exampleStaticRepresentation).getSegmentByTime(0).getNumber();
+    assert.strictEqual(typeof value, 'number', 'getNumber() returns expected type!');
+    assert.strictEqual(value, 0, 'getNumber() returns expected value!');
+});
+
+QUnit.test('getSegmentByUTCWallClockTime().getNumber() returns expected value', function(assert) {
+    var value = getSegmentListForRepresentation(exampleStaticRepresentation).getSegmentByUTCWallClockTime(1346835600000).getNumber();
+    assert.strictEqual(typeof value, 'number', 'getNumber() returns expected type!');
+    assert.strictEqual(value, 0, 'getNumber() returns expected value!');
+});
+
+QUnit.test('getSegmentByNumber().getDuration() returns expected value', function(assert) {
+    var value = getSegmentListForRepresentation(exampleStaticRepresentation).getSegmentByNumber(0).getDuration();
+    assert.strictEqual(typeof value, 'number', 'getDuration() returns expected type!');
+    assert.strictEqual(value, 4, 'getDuration() returns expected value!');
+});
+
+QUnit.test('getSegmentByTime().getDuration() returns expected value', function(assert) {
+    var value = getSegmentListForRepresentation(exampleStaticRepresentation).getSegmentByTime(0).getDuration();
+    assert.strictEqual(typeof value, 'number', 'getDuration() returns expected type!');
+    assert.strictEqual(value, 4, 'getDuration() returns expected value!');
+});
+
+QUnit.test('getSegmentByUTCWallClockTime().getDuration() returns expected value', function(assert) {
+    var value = getSegmentListForRepresentation(exampleStaticRepresentation).getSegmentByUTCWallClockTime(1346835600000).getDuration();
+    assert.strictEqual(typeof value, 'number', 'getDuration() returns expected type!');
+    assert.strictEqual(value, 4, 'getDuration() returns expected value!');
+});
+
+// TODO: Use Sinon to test getUrl() (dependency on MPD source URL)
 
