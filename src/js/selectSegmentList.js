@@ -26,6 +26,7 @@ function filterSegmentListsByResolution(segmentList, maxWidth, maxHeight) {
 function filterSegmentListsByDownloadRate(segmentList, currentSegmentListBandwidth, downloadRateRatio) {
     var segmentListBandwidth = segmentList.getBandwidth(),
         segmentBandwidthRatio = segmentListBandwidth / currentSegmentListBandwidth;
+    downloadRateRatio = downloadRateRatio || Number.MAX_VALUE;
     return (downloadRateRatio >= segmentBandwidthRatio);
 }
 
@@ -37,7 +38,6 @@ function selectSegmentList(mediaSet, data) {
         width = data.width,
         height = data.height,
         sortedByBandwidth = mediaSet.getSegmentLists().sort(compareSegmentListsByBandwidthAscending),
-        sortedByResolutionThenBandwidth = mediaSet.getSegmentLists().sort(compareSegmentListsByWidthThenBandwidthAscending),
         filteredByDownloadRate,
         filteredByResolution,
         proposedSegmentList;
@@ -50,10 +50,10 @@ function selectSegmentList(mediaSet, data) {
         return filterSegmentListsByDownloadRate(segmentList, currentSegmentListBandwidth, downloadRateRatio);
     }
 
-    filteredByResolution = sortedByResolutionThenBandwidth.filter(filterByResolution);
     filteredByDownloadRate = sortedByBandwidth.filter(filterByDownloadRate);
+    filteredByResolution = filteredByDownloadRate.sort(compareSegmentListsByWidthThenBandwidthAscending).filter(filterByResolution);
 
-    proposedSegmentList = filteredByResolution[filteredByResolution.length - 1] || filteredByDownloadRate[filteredByDownloadRate.length - 1] || sortedByBandwidth[0];
+    proposedSegmentList = filteredByResolution[filteredByResolution.length - 1] || sortedByBandwidth[0];
 
     return proposedSegmentList;
 }
