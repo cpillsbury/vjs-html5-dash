@@ -15,6 +15,132 @@ if (typeof window !== "undefined") {
 'use strict';
 
 var existy = require('./util/existy.js'),
+    getMediaTypeFromMimeType = require('./util/getMediaTypeFromMimeType.js'),
+    getSegmentListForRepresentation = require('./dash/segments/getSegmentListForRepresentation.js'),
+    findElementInArray = require('./util/findElementInArray.js'),
+    mediaTypes = require('./manifest/MediaTypes.js');
+
+/**
+ *
+ * Primary data view for representing the set of segment lists and other general information for a give media type
+ * (e.g. 'audio' or 'video').
+ *
+ * @param adaptationSet The MPEG-DASH correlate for a given media set, containing some way of representating segment lists
+ *                      and a set of representations for each stream variant.
+ * @constructor
+ */
+function MediaSet(adaptationSet) {
+    // TODO: Additional checks & Error Throwing
+    this.__adaptationSet = adaptationSet;
+}
+
+MediaSet.prototype.getMediaType = function getMediaType() {
+    var type = getMediaTypeFromMimeType(this.getMimeType(), mediaTypes);
+    return type;
+};
+
+MediaSet.prototype.getMimeType = function getMimeType() {
+    var mimeType = this.__adaptationSet.getMimeType();
+    return mimeType;
+};
+
+MediaSet.prototype.getSourceBufferType = function getSourceBufferType() {
+    // NOTE: Currently assuming the codecs associated with each stream variant/representation
+    // will be similar enough that you won't have to re-create the source-buffer when switching
+    // between them.
+
+    var representation = this.__adaptationSet.getRepresentations()[0],
+        segmentList = getSegmentListForRepresentation(representation);
+    return segmentList.getType();
+};
+
+MediaSet.prototype.getTotalDuration = function getTotalDuration() {
+    var representation = this.__adaptationSet.getRepresentations()[0],
+        segmentList = getSegmentListForRepresentation(representation),
+        totalDuration = segmentList.getTotalDuration();
+    return totalDuration;
+};
+
+MediaSet.prototype.getUTCWallClockStartTime = function() {
+    var representation = this.__adaptationSet.getRepresentations()[0],
+        segmentList = getSegmentListForRepresentation(representation),
+        wallClockTime = segmentList.getUTCWallClockStartTime();
+    return wallClockTime;
+};
+
+// NOTE: Currently assuming these values will be consistent across all representations. While this is *usually*
+// the case, the spec *does* allow segments to not align across representations.
+// See, for example: @segmentAlignment AdaptationSet attribute, ISO IEC 23009-1 Sec. 5.3.3.2, pp 24-5.
+MediaSet.prototype.getTotalSegmentCount = function getTotalSegmentCount() {
+    var representation = this.__adaptationSet.getRepresentations()[0],
+        segmentList = getSegmentListForRepresentation(representation),
+        totalSegmentCount = segmentList.getTotalSegmentCount();
+    return totalSegmentCount;
+};
+
+// NOTE: Currently assuming these values will be consistent across all representations. While this is *usually*
+// the case in actual practice, the spec *does* allow segments to not align across representations.
+// See, for example: @segmentAlignment AdaptationSet attribute, ISO IEC 23009-1 Sec. 5.3.3.2, pp 24-5.
+MediaSet.prototype.getSegmentDuration = function getSegmentDuration() {
+    var representation = this.__adaptationSet.getRepresentations()[0],
+        segmentList = getSegmentListForRepresentation(representation),
+        segmentDuration = segmentList.getSegmentDuration();
+    return segmentDuration;
+};
+
+// NOTE: Currently assuming these values will be consistent across all representations. While this is *usually*
+// the case in actual practice, the spec *does* allow segments to not align across representations.
+// See, for example: @segmentAlignment AdaptationSet attribute, ISO IEC 23009-1 Sec. 5.3.3.2, pp 24-5.
+MediaSet.prototype.getSegmentListStartNumber = function getSegmentListStartNumber() {
+    var representation = this.__adaptationSet.getRepresentations()[0],
+        segmentList = getSegmentListForRepresentation(representation),
+        segmentListStartNumber = segmentList.getStartNumber();
+    return segmentListStartNumber;
+};
+
+// NOTE: Currently assuming these values will be consistent across all representations. While this is *usually*
+// the case in actual practice, the spec *does* allow segments to not align across representations.
+// See, for example: @segmentAlignment AdaptationSet attribute, ISO IEC 23009-1 Sec. 5.3.3.2, pp 24-5.
+MediaSet.prototype.getSegmentListEndNumber = function getSegmentListEndNumber() {
+    var representation = this.__adaptationSet.getRepresentations()[0],
+        segmentList = getSegmentListForRepresentation(representation),
+        segmentListEndNumber = segmentList.getEndNumber();
+    return segmentListEndNumber;
+};
+
+
+MediaSet.prototype.getSegmentLists = function getSegmentLists() {
+    var representations = this.__adaptationSet.getRepresentations(),
+        segmentLists = representations.map(getSegmentListForRepresentation);
+    return segmentLists;
+};
+
+MediaSet.prototype.getSegmentListByBandwidth = function getSegmentListByBandwidth(bandwidth) {
+    var representations = this.__adaptationSet.getRepresentations(),
+        representationWithBandwidthMatch = findElementInArray(representations, function(representation) {
+            var representationBandwidth = representation.getBandwidth();
+            return (Number(representationBandwidth) === Number(bandwidth));
+        }),
+        segmentList = getSegmentListForRepresentation(representationWithBandwidthMatch);
+    return segmentList;
+};
+
+MediaSet.prototype.getAvailableBandwidths = function getAvailableBandwidths() {
+    return this.__adaptationSet.getRepresentations().map(
+        function(representation) {
+            return Number(representation.getBandwidth());
+        }).filter(
+        function(bandwidth) {
+            return existy(bandwidth);
+        }
+    );
+};
+
+module.exports = MediaSet;
+},{"./dash/segments/getSegmentListForRepresentation.js":8,"./manifest/MediaTypes.js":14,"./util/existy.js":19,"./util/findElementInArray.js":21,"./util/getMediaTypeFromMimeType.js":22}],3:[function(require,module,exports){
+'use strict';
+
+var existy = require('./util/existy.js'),
     isFunction = require('./util/isFunction.js'),
     extendObject = require('./util/extendObject.js'),
     EventDispatcherMixin = require('./events/EventDispatcherMixin.js'),
@@ -289,7 +415,7 @@ MediaTypeLoader.prototype.getNextSegmentToLoad = function(currentTime, segmentLi
 extendObject(MediaTypeLoader.prototype, EventDispatcherMixin);
 
 module.exports = MediaTypeLoader;
-},{"./events/EventDispatcherMixin.js":9,"./util/existy.js":18,"./util/extendObject.js":19,"./util/isFunction.js":21}],3:[function(require,module,exports){
+},{"./events/EventDispatcherMixin.js":10,"./util/existy.js":19,"./util/extendObject.js":20,"./util/isFunction.js":24}],4:[function(require,module,exports){
 'use strict';
 
 var existy = require('./util/existy.js'),
@@ -412,7 +538,7 @@ function PlaylistLoader(manifestController, mediaSource, tech) {
 }
 
 module.exports = PlaylistLoader;
-},{"./MediaTypeLoader.js":2,"./manifest/MediaTypes.js":13,"./segments/SegmentLoader.js":15,"./selectSegmentList.js":16,"./sourceBuffer/SourceBufferDataQueue.js":17,"./util/existy.js":18}],4:[function(require,module,exports){
+},{"./MediaTypeLoader.js":3,"./manifest/MediaTypes.js":14,"./segments/SegmentLoader.js":16,"./selectSegmentList.js":17,"./sourceBuffer/SourceBufferDataQueue.js":18,"./util/existy.js":19}],5:[function(require,module,exports){
 'use strict';
 
 var MediaSource = require('global/window').MediaSource,
@@ -454,7 +580,7 @@ function SourceHandler(source, tech) {
 
 module.exports = SourceHandler;
 
-},{"./PlaylistLoader.js":3,"./manifest/ManifestController.js":12,"global/window":1}],5:[function(require,module,exports){
+},{"./PlaylistLoader.js":4,"./manifest/ManifestController.js":13,"global/window":1}],6:[function(require,module,exports){
 'use strict';
 
 var xmlfun = require('../../xmlfun.js'),
@@ -692,7 +818,7 @@ getAncestorObjectByName = function getAncestorObjectByName(xmlNode, tagName, map
 };
 
 module.exports = getMpd;
-},{"../../util/isArray.js":20,"../../util/isFunction.js":21,"../../util/isString.js":23,"../../xmlfun.js":25,"./util.js":6}],6:[function(require,module,exports){
+},{"../../util/isArray.js":23,"../../util/isFunction.js":24,"../../util/isString.js":26,"../../xmlfun.js":28,"./util.js":7}],7:[function(require,module,exports){
 'use strict';
 
 var parseRootUrl,
@@ -778,7 +904,7 @@ var util = {
 };
 
 module.exports = util;
-},{}],7:[function(require,module,exports){
+},{}],8:[function(require,module,exports){
 'use strict';
 
 var existy = require('../../util/existy.js'),
@@ -803,6 +929,16 @@ var existy = require('../../util/existy.js'),
     getStartNumberFromTemplate,
     getEndNumberFromTemplate;
 
+
+/**
+ *
+ * Function used to get the 'type' of a DASH Representation in a format expected by the MSE SourceBuffer. Used to
+ * create SourceBuffer instances that correspond to a given MediaSet (e.g. set of audio stream variants, video stream
+ * variants, etc.).
+ *
+ * @param representation    POJO DASH MPD Representation
+ * @returns {string}        The Representation's 'type' in a format expected by the MSE SourceBuffer
+ */
 getType = function(representation) {
     var codecStr = representation.getCodecs();
     var typeStr = representation.getMimeType();
@@ -984,7 +1120,7 @@ function getSegmentListForRepresentation(representation) {
 
 module.exports = getSegmentListForRepresentation;
 
-},{"../../util/existy.js":18,"../../xmlfun.js":25,"../mpd/util.js":6,"./segmentTemplate":8}],8:[function(require,module,exports){
+},{"../../util/existy.js":19,"../../xmlfun.js":28,"../mpd/util.js":7,"./segmentTemplate":9}],9:[function(require,module,exports){
 'use strict';
 
 var segmentTemplate,
@@ -1089,7 +1225,7 @@ segmentTemplate = {
 };
 
 module.exports = segmentTemplate;
-},{}],9:[function(require,module,exports){
+},{}],10:[function(require,module,exports){
 'use strict';
 
 var eventMgr = require('./eventManager.js'),
@@ -1101,7 +1237,7 @@ var eventMgr = require('./eventManager.js'),
     };
 
 module.exports = eventDispatcherMixin;
-},{"./eventManager.js":10}],10:[function(require,module,exports){
+},{"./eventManager.js":11}],11:[function(require,module,exports){
 'use strict';
 
 var videojs = require('global/window').videojs,
@@ -1114,7 +1250,7 @@ var videojs = require('global/window').videojs,
 
 module.exports = eventManager;
 
-},{"global/window":1}],11:[function(require,module,exports){
+},{"global/window":1}],12:[function(require,module,exports){
 /**
  *
  * main source for packaged code. Auto-bootstraps the source handling functionality by registering the source handler
@@ -1187,7 +1323,7 @@ module.exports = eventManager;
 
 }.call(this));
 
-},{"./SourceHandler":4,"global/window":1}],12:[function(require,module,exports){
+},{"./SourceHandler":5,"global/window":1}],13:[function(require,module,exports){
 'use strict';
 
 var existy = require('../util/existy.js'),
@@ -1195,73 +1331,15 @@ var existy = require('../util/existy.js'),
     isString = require('../util/isString.js'),
     isFunction = require('../util/isFunction.js'),
     isArray = require('../util/isArray.js'),
+    findElementInArray = require('../util/findElementInArray.js'),
+    getMediaTypeFromMimeType = require('../util/getMediaTypeFromMimeType.js'),
     loadManifest = require('./loadManifest.js'),
     extendObject = require('../util/extendObject.js'),
     parseMediaPresentationDuration = require('../dash/mpd/util.js').parseMediaPresentationDuration,
     EventDispatcherMixin = require('../events/EventDispatcherMixin.js'),
-    getSegmentListForRepresentation = require('../dash/segments/getSegmentListForRepresentation.js'),
     getMpd = require('../dash/mpd/getMpd.js'),
-    getSourceBufferTypeFromRepresentation,
-    getMediaTypeFromMimeType,
-    findElementInArray,
-    mediaTypes = require('./MediaTypes.js'),
-    DEFAULT_TYPE = mediaTypes[0];
-
-/**
- *
- * Function used to get the media type based on the mime type. Used to determine the media type of Adaptation Sets
- * or corresponding data representations.
- *
- * @param mimeType {string} mime type for a DASH MPD Adaptation Set (specified as an attribute string)
- * @param types {string}    supported media types (e.g. 'video,' 'audio,')
- * @returns {string}        the media type that corresponds to the mime type.
- */
-getMediaTypeFromMimeType = function(mimeType, types) {
-    if (!isString(mimeType)) { return DEFAULT_TYPE; }   // TODO: Throw error?
-    var matchedType = findElementInArray(types, function(type) {
-        return (!!mimeType && mimeType.indexOf(type) >= 0);
-    });
-
-    return existy(matchedType) ? matchedType : DEFAULT_TYPE;
-};
-
-/**
- *
- * Function used to get the 'type' of a DASH Representation in a format expected by the MSE SourceBuffer. Used to
- * create SourceBuffer instances that correspond to a given MediaSet (e.g. set of audio stream variants, video stream
- * variants, etc.).
- *
- * @param representation    POJO DASH MPD Representation
- * @returns {string}        The Representation's 'type' in a format expected by the MSE SourceBuffer
- */
-getSourceBufferTypeFromRepresentation = function(representation) {
-    var codecStr = representation.getCodecs();
-    var typeStr = representation.getMimeType();
-
-    //NOTE: LEADING ZEROS IN CODEC TYPE/SUBTYPE ARE TECHNICALLY NOT SPEC COMPLIANT, BUT GPAC & OTHER
-    // DASH MPD GENERATORS PRODUCE THESE NON-COMPLIANT VALUES. HANDLING HERE FOR NOW.
-    // See: RFC 6381 Sec. 3.4 (https://tools.ietf.org/html/rfc6381#section-3.4)
-    var parsedCodec = codecStr.split('.').map(function(str) {
-        return str.replace(/^0+(?!\.|$)/, '');
-    });
-    var processedCodecStr = parsedCodec.join('.');
-
-    return (typeStr + ';codecs="' + processedCodecStr + '"');
-};
-
-findElementInArray = function(array, predicateFn) {
-    if (!isArray(array) || !isFunction(predicateFn)) { return undefined; }
-    var i,
-        length = array.length,
-        elem;
-
-    for (i=0; i<length; i++) {
-        elem = array[i];
-        if (predicateFn(elem, i, array)) { return elem; }
-    }
-
-    return undefined;
-};
+    MediaSet = require('../MediaSet.js'),
+    mediaTypes = require('./MediaTypes.js');
 
 /**
  *
@@ -1413,127 +1491,10 @@ ManifestController.prototype.getMediaSets = function getMediaSets() {
 // Mixin event handling for the ManifestController object type definition.
 extendObject(ManifestController.prototype, EventDispatcherMixin);
 
-// TODO: Move MediaSet definition to a separate .js file?
-/**
- *
- * Primary data view for representing the set of segment lists and other general information for a give media type
- * (e.g. 'audio' or 'video').
- *
- * @param adaptationSet The MPEG-DASH correlate for a given media set, containing some way of representating segment lists
- *                      and a set of representations for each stream variant.
- * @constructor
- */
-function MediaSet(adaptationSet) {
-    // TODO: Additional checks & Error Throwing
-    this.__adaptationSet = adaptationSet;
-}
-
-MediaSet.prototype.getMediaType = function getMediaType() {
-    var type = getMediaTypeFromMimeType(this.getMimeType(), mediaTypes);
-    return type;
-};
-
-MediaSet.prototype.getMimeType = function getMimeType() {
-    var mimeType = this.__adaptationSet.getMimeType();
-    return mimeType;
-};
-
-MediaSet.prototype.getSourceBufferType = function getSourceBufferType() {
-    // NOTE: Currently assuming the codecs associated with each stream variant/representation
-    // will be similar enough that you won't have to re-create the source-buffer when switching
-    // between them.
-
-    var representation = this.__adaptationSet.getRepresentations()[0],
-        sourceBufferType = getSourceBufferTypeFromRepresentation(representation);
-    return sourceBufferType;
-};
-
-MediaSet.prototype.getTotalDuration = function getTotalDuration() {
-    var representation = this.__adaptationSet.getRepresentations()[0],
-        segmentList = getSegmentListForRepresentation(representation),
-        totalDuration = segmentList.getTotalDuration();
-    return totalDuration;
-};
-
-MediaSet.prototype.getUTCWallClockStartTime = function() {
-    var representation = this.__adaptationSet.getRepresentations()[0],
-        segmentList = getSegmentListForRepresentation(representation),
-        wallClockTime = segmentList.getUTCWallClockStartTime();
-    return wallClockTime;
-};
-
-// NOTE: Currently assuming these values will be consistent across all representations. While this is *usually*
-// the case, the spec *does* allow segments to not align across representations.
-// See, for example: @segmentAlignment AdaptationSet attribute, ISO IEC 23009-1 Sec. 5.3.3.2, pp 24-5.
-MediaSet.prototype.getTotalSegmentCount = function getTotalSegmentCount() {
-    var representation = this.__adaptationSet.getRepresentations()[0],
-        segmentList = getSegmentListForRepresentation(representation),
-        totalSegmentCount = segmentList.getTotalSegmentCount();
-    return totalSegmentCount;
-};
-
-// NOTE: Currently assuming these values will be consistent across all representations. While this is *usually*
-// the case in actual practice, the spec *does* allow segments to not align across representations.
-// See, for example: @segmentAlignment AdaptationSet attribute, ISO IEC 23009-1 Sec. 5.3.3.2, pp 24-5.
-MediaSet.prototype.getSegmentDuration = function getSegmentDuration() {
-    var representation = this.__adaptationSet.getRepresentations()[0],
-        segmentList = getSegmentListForRepresentation(representation),
-        segmentDuration = segmentList.getSegmentDuration();
-    return segmentDuration;
-};
-
-// NOTE: Currently assuming these values will be consistent across all representations. While this is *usually*
-// the case in actual practice, the spec *does* allow segments to not align across representations.
-// See, for example: @segmentAlignment AdaptationSet attribute, ISO IEC 23009-1 Sec. 5.3.3.2, pp 24-5.
-MediaSet.prototype.getSegmentListStartNumber = function getSegmentListStartNumber() {
-    var representation = this.__adaptationSet.getRepresentations()[0],
-        segmentList = getSegmentListForRepresentation(representation),
-        segmentListStartNumber = segmentList.getStartNumber();
-    return segmentListStartNumber;
-};
-
-// NOTE: Currently assuming these values will be consistent across all representations. While this is *usually*
-// the case in actual practice, the spec *does* allow segments to not align across representations.
-// See, for example: @segmentAlignment AdaptationSet attribute, ISO IEC 23009-1 Sec. 5.3.3.2, pp 24-5.
-MediaSet.prototype.getSegmentListEndNumber = function getSegmentListEndNumber() {
-    var representation = this.__adaptationSet.getRepresentations()[0],
-        segmentList = getSegmentListForRepresentation(representation),
-        segmentListEndNumber = segmentList.getEndNumber();
-    return segmentListEndNumber;
-};
-
-
-MediaSet.prototype.getSegmentLists = function getSegmentLists() {
-    var representations = this.__adaptationSet.getRepresentations(),
-        segmentLists = representations.map(getSegmentListForRepresentation);
-    return segmentLists;
-};
-
-MediaSet.prototype.getSegmentListByBandwidth = function getSegmentListByBandwidth(bandwidth) {
-    var representations = this.__adaptationSet.getRepresentations(),
-        representationWithBandwidthMatch = findElementInArray(representations, function(representation) {
-            var representationBandwidth = representation.getBandwidth();
-            return (Number(representationBandwidth) === Number(bandwidth));
-        }),
-        segmentList = getSegmentListForRepresentation(representationWithBandwidthMatch);
-    return segmentList;
-};
-
-MediaSet.prototype.getAvailableBandwidths = function getAvailableBandwidths() {
-    return this.__adaptationSet.getRepresentations().map(
-        function(representation) {
-            return Number(representation.getBandwidth());
-    }).filter(
-        function(bandwidth) {
-            return existy(bandwidth);
-        }
-    );
-};
-
 module.exports = ManifestController;
-},{"../dash/mpd/getMpd.js":5,"../dash/mpd/util.js":6,"../dash/segments/getSegmentListForRepresentation.js":7,"../events/EventDispatcherMixin.js":9,"../util/existy.js":18,"../util/extendObject.js":19,"../util/isArray.js":20,"../util/isFunction.js":21,"../util/isString.js":23,"../util/truthy.js":24,"./MediaTypes.js":13,"./loadManifest.js":14}],13:[function(require,module,exports){
+},{"../MediaSet.js":2,"../dash/mpd/getMpd.js":6,"../dash/mpd/util.js":7,"../events/EventDispatcherMixin.js":10,"../util/existy.js":19,"../util/extendObject.js":20,"../util/findElementInArray.js":21,"../util/getMediaTypeFromMimeType.js":22,"../util/isArray.js":23,"../util/isFunction.js":24,"../util/isString.js":26,"../util/truthy.js":27,"./MediaTypes.js":14,"./loadManifest.js":15}],14:[function(require,module,exports){
 module.exports = ['video', 'audio'];
-},{}],14:[function(require,module,exports){
+},{}],15:[function(require,module,exports){
 'use strict';
 
 var parseRootUrl = require('../dash/mpd/util.js').parseRootUrl;
@@ -1559,7 +1520,7 @@ function loadManifest(url, callback) {
 }
 
 module.exports = loadManifest;
-},{"../dash/mpd/util.js":6}],15:[function(require,module,exports){
+},{"../dash/mpd/util.js":7}],16:[function(require,module,exports){
 
 var existy = require('../util/existy.js'),
     isNumber = require('../util/isNumber.js'),
@@ -1865,7 +1826,7 @@ SegmentLoader.prototype.loadSegmentAtTime = function(presentationTime) {
 extendObject(SegmentLoader.prototype, EventDispatcherMixin);
 
 module.exports = SegmentLoader;
-},{"../events/EventDispatcherMixin.js":9,"../util/existy.js":18,"../util/extendObject.js":19,"../util/isNumber.js":22}],16:[function(require,module,exports){
+},{"../events/EventDispatcherMixin.js":10,"../util/existy.js":19,"../util/extendObject.js":20,"../util/isNumber.js":25}],17:[function(require,module,exports){
 'use strict';
 
 function compareSegmentListsByBandwidthAscending(segmentListA, segmentListB) {
@@ -1927,7 +1888,7 @@ function selectSegmentList(mediaSet, data) {
 }
 
 module.exports = selectSegmentList;
-},{}],17:[function(require,module,exports){
+},{}],18:[function(require,module,exports){
 'use strict';
 
 var isFunction = require('../util/isFunction.js'),
@@ -2046,13 +2007,13 @@ SourceBufferDataQueue.prototype.getBufferedTimeRangeListAlignedToSegmentDuration
 extendObject(SourceBufferDataQueue.prototype, EventDispatcherMixin);
 
 module.exports = SourceBufferDataQueue;
-},{"../events/EventDispatcherMixin.js":9,"../util/existy.js":18,"../util/extendObject.js":19,"../util/isArray.js":20,"../util/isFunction.js":21,"../util/isNumber.js":22}],18:[function(require,module,exports){
+},{"../events/EventDispatcherMixin.js":10,"../util/existy.js":19,"../util/extendObject.js":20,"../util/isArray.js":23,"../util/isFunction.js":24,"../util/isNumber.js":25}],19:[function(require,module,exports){
 'use strict';
 
 function existy(x) { return (x !== null) && (x !== undefined); }
 
 module.exports = existy;
-},{}],19:[function(require,module,exports){
+},{}],20:[function(require,module,exports){
 'use strict';
 
 // Extend a given object with all the properties (and their values) found in the passed-in object(s).
@@ -2075,7 +2036,56 @@ var extendObject = function(obj /*, extendObject1, extendObject2, ..., extendObj
 };
 
 module.exports = extendObject;
-},{}],20:[function(require,module,exports){
+},{}],21:[function(require,module,exports){
+'use strict';
+
+var isArray = require('./isArray.js'),
+    isFunction = require('./isFunction.js'),
+    findElementInArray;
+
+findElementInArray = function(array, predicateFn) {
+    if (!isArray(array) || !isFunction(predicateFn)) { return undefined; }
+    var i,
+        length = array.length,
+        elem;
+
+    for (i=0; i<length; i++) {
+        elem = array[i];
+        if (predicateFn(elem, i, array)) { return elem; }
+    }
+
+    return undefined;
+};
+
+module.exports = findElementInArray;
+},{"./isArray.js":23,"./isFunction.js":24}],22:[function(require,module,exports){
+'use strict';
+
+var existy = require('./existy.js'),
+    isString = require('./isString.js'),
+    findElementInArray = require('./findElementInArray.js'),
+    getMediaTypeFromMimeType;
+
+/**
+ *
+ * Function used to get the media type based on the mime type. Used to determine the media type of Adaptation Sets
+ * or corresponding data representations.
+ *
+ * @param mimeType {string} mime type for a DASH MPD Adaptation Set (specified as an attribute string)
+ * @param types {string}    supported media types (e.g. 'video,' 'audio,')
+ * @returns {string}        the media type that corresponds to the mime type.
+ */
+getMediaTypeFromMimeType = function(mimeType, types) {
+    if (!isString(mimeType)) { return null; }   // TODO: Throw error?
+    var matchedType = findElementInArray(types, function(type) {
+        return (!!mimeType && mimeType.indexOf(type) >= 0);
+    });
+
+    return matchedType;
+};
+
+module.exports = getMediaTypeFromMimeType;
+},{"./existy.js":19,"./findElementInArray.js":21,"./isString.js":26}],23:[function(require,module,exports){
 'use strict';
 
 var genericObjType = function(){},
@@ -2086,7 +2096,7 @@ function isArray(obj) {
 }
 
 module.exports = isArray;
-},{}],21:[function(require,module,exports){
+},{}],24:[function(require,module,exports){
 'use strict';
 
 var genericObjType = function(){},
@@ -2103,7 +2113,7 @@ if (isFunction(/x/)) {
 }
 
 module.exports = isFunction;
-},{}],22:[function(require,module,exports){
+},{}],25:[function(require,module,exports){
 'use strict';
 
 var genericObjType = function(){},
@@ -2115,7 +2125,7 @@ function isNumber(value) {
 }
 
 module.exports = isNumber;
-},{}],23:[function(require,module,exports){
+},{}],26:[function(require,module,exports){
 'use strict';
 
 var genericObjType = function(){},
@@ -2127,7 +2137,7 @@ var isString = function isString(value) {
 };
 
 module.exports = isString;
-},{}],24:[function(require,module,exports){
+},{}],27:[function(require,module,exports){
 'use strict';
 
 var existy = require('./existy.js');
@@ -2139,7 +2149,7 @@ var existy = require('./existy.js');
 function truthy(x) { return (x !== false) && existy(x); }
 
 module.exports = truthy;
-},{"./existy.js":18}],25:[function(require,module,exports){
+},{"./existy.js":19}],28:[function(require,module,exports){
 'use strict';
 
 // TODO: Refactor to separate js files & modules & remove from here.
@@ -2290,4 +2300,4 @@ xmlfun.getInheritableElement = getInheritableElement;
 xmlfun.getMultiLevelElementList = getMultiLevelElementList;
 
 module.exports = xmlfun;
-},{"./util/existy.js":18,"./util/isFunction.js":21,"./util/isString.js":23}]},{},[11]);
+},{"./util/existy.js":19,"./util/isFunction.js":24,"./util/isString.js":26}]},{},[12]);

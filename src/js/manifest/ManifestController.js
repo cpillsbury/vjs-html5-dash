@@ -5,73 +5,15 @@ var existy = require('../util/existy.js'),
     isString = require('../util/isString.js'),
     isFunction = require('../util/isFunction.js'),
     isArray = require('../util/isArray.js'),
+    findElementInArray = require('../util/findElementInArray.js'),
+    getMediaTypeFromMimeType = require('../util/getMediaTypeFromMimeType.js'),
     loadManifest = require('./loadManifest.js'),
     extendObject = require('../util/extendObject.js'),
     parseMediaPresentationDuration = require('../dash/mpd/util.js').parseMediaPresentationDuration,
     EventDispatcherMixin = require('../events/EventDispatcherMixin.js'),
-    getSegmentListForRepresentation = require('../dash/segments/getSegmentListForRepresentation.js'),
     getMpd = require('../dash/mpd/getMpd.js'),
-    getSourceBufferTypeFromRepresentation,
-    getMediaTypeFromMimeType,
-    findElementInArray,
-    mediaTypes = require('./MediaTypes.js'),
-    DEFAULT_TYPE = mediaTypes[0];
-
-/**
- *
- * Function used to get the media type based on the mime type. Used to determine the media type of Adaptation Sets
- * or corresponding data representations.
- *
- * @param mimeType {string} mime type for a DASH MPD Adaptation Set (specified as an attribute string)
- * @param types {string}    supported media types (e.g. 'video,' 'audio,')
- * @returns {string}        the media type that corresponds to the mime type.
- */
-getMediaTypeFromMimeType = function(mimeType, types) {
-    if (!isString(mimeType)) { return DEFAULT_TYPE; }   // TODO: Throw error?
-    var matchedType = findElementInArray(types, function(type) {
-        return (!!mimeType && mimeType.indexOf(type) >= 0);
-    });
-
-    return existy(matchedType) ? matchedType : DEFAULT_TYPE;
-};
-
-/**
- *
- * Function used to get the 'type' of a DASH Representation in a format expected by the MSE SourceBuffer. Used to
- * create SourceBuffer instances that correspond to a given MediaSet (e.g. set of audio stream variants, video stream
- * variants, etc.).
- *
- * @param representation    POJO DASH MPD Representation
- * @returns {string}        The Representation's 'type' in a format expected by the MSE SourceBuffer
- */
-getSourceBufferTypeFromRepresentation = function(representation) {
-    var codecStr = representation.getCodecs();
-    var typeStr = representation.getMimeType();
-
-    //NOTE: LEADING ZEROS IN CODEC TYPE/SUBTYPE ARE TECHNICALLY NOT SPEC COMPLIANT, BUT GPAC & OTHER
-    // DASH MPD GENERATORS PRODUCE THESE NON-COMPLIANT VALUES. HANDLING HERE FOR NOW.
-    // See: RFC 6381 Sec. 3.4 (https://tools.ietf.org/html/rfc6381#section-3.4)
-    var parsedCodec = codecStr.split('.').map(function(str) {
-        return str.replace(/^0+(?!\.|$)/, '');
-    });
-    var processedCodecStr = parsedCodec.join('.');
-
-    return (typeStr + ';codecs="' + processedCodecStr + '"');
-};
-
-findElementInArray = function(array, predicateFn) {
-    if (!isArray(array) || !isFunction(predicateFn)) { return undefined; }
-    var i,
-        length = array.length,
-        elem;
-
-    for (i=0; i<length; i++) {
-        elem = array[i];
-        if (predicateFn(elem, i, array)) { return elem; }
-    }
-
-    return undefined;
-};
+    MediaSet = require('../MediaSet.js'),
+    mediaTypes = require('./MediaTypes.js');
 
 /**
  *
@@ -222,122 +164,5 @@ ManifestController.prototype.getMediaSets = function getMediaSets() {
 
 // Mixin event handling for the ManifestController object type definition.
 extendObject(ManifestController.prototype, EventDispatcherMixin);
-
-// TODO: Move MediaSet definition to a separate .js file?
-/**
- *
- * Primary data view for representing the set of segment lists and other general information for a give media type
- * (e.g. 'audio' or 'video').
- *
- * @param adaptationSet The MPEG-DASH correlate for a given media set, containing some way of representating segment lists
- *                      and a set of representations for each stream variant.
- * @constructor
- */
-function MediaSet(adaptationSet) {
-    // TODO: Additional checks & Error Throwing
-    this.__adaptationSet = adaptationSet;
-}
-
-MediaSet.prototype.getMediaType = function getMediaType() {
-    var type = getMediaTypeFromMimeType(this.getMimeType(), mediaTypes);
-    return type;
-};
-
-MediaSet.prototype.getMimeType = function getMimeType() {
-    var mimeType = this.__adaptationSet.getMimeType();
-    return mimeType;
-};
-
-MediaSet.prototype.getSourceBufferType = function getSourceBufferType() {
-    // NOTE: Currently assuming the codecs associated with each stream variant/representation
-    // will be similar enough that you won't have to re-create the source-buffer when switching
-    // between them.
-
-    var representation = this.__adaptationSet.getRepresentations()[0],
-        sourceBufferType = getSourceBufferTypeFromRepresentation(representation);
-    return sourceBufferType;
-};
-
-MediaSet.prototype.getTotalDuration = function getTotalDuration() {
-    var representation = this.__adaptationSet.getRepresentations()[0],
-        segmentList = getSegmentListForRepresentation(representation),
-        totalDuration = segmentList.getTotalDuration();
-    return totalDuration;
-};
-
-MediaSet.prototype.getUTCWallClockStartTime = function() {
-    var representation = this.__adaptationSet.getRepresentations()[0],
-        segmentList = getSegmentListForRepresentation(representation),
-        wallClockTime = segmentList.getUTCWallClockStartTime();
-    return wallClockTime;
-};
-
-// NOTE: Currently assuming these values will be consistent across all representations. While this is *usually*
-// the case, the spec *does* allow segments to not align across representations.
-// See, for example: @segmentAlignment AdaptationSet attribute, ISO IEC 23009-1 Sec. 5.3.3.2, pp 24-5.
-MediaSet.prototype.getTotalSegmentCount = function getTotalSegmentCount() {
-    var representation = this.__adaptationSet.getRepresentations()[0],
-        segmentList = getSegmentListForRepresentation(representation),
-        totalSegmentCount = segmentList.getTotalSegmentCount();
-    return totalSegmentCount;
-};
-
-// NOTE: Currently assuming these values will be consistent across all representations. While this is *usually*
-// the case in actual practice, the spec *does* allow segments to not align across representations.
-// See, for example: @segmentAlignment AdaptationSet attribute, ISO IEC 23009-1 Sec. 5.3.3.2, pp 24-5.
-MediaSet.prototype.getSegmentDuration = function getSegmentDuration() {
-    var representation = this.__adaptationSet.getRepresentations()[0],
-        segmentList = getSegmentListForRepresentation(representation),
-        segmentDuration = segmentList.getSegmentDuration();
-    return segmentDuration;
-};
-
-// NOTE: Currently assuming these values will be consistent across all representations. While this is *usually*
-// the case in actual practice, the spec *does* allow segments to not align across representations.
-// See, for example: @segmentAlignment AdaptationSet attribute, ISO IEC 23009-1 Sec. 5.3.3.2, pp 24-5.
-MediaSet.prototype.getSegmentListStartNumber = function getSegmentListStartNumber() {
-    var representation = this.__adaptationSet.getRepresentations()[0],
-        segmentList = getSegmentListForRepresentation(representation),
-        segmentListStartNumber = segmentList.getStartNumber();
-    return segmentListStartNumber;
-};
-
-// NOTE: Currently assuming these values will be consistent across all representations. While this is *usually*
-// the case in actual practice, the spec *does* allow segments to not align across representations.
-// See, for example: @segmentAlignment AdaptationSet attribute, ISO IEC 23009-1 Sec. 5.3.3.2, pp 24-5.
-MediaSet.prototype.getSegmentListEndNumber = function getSegmentListEndNumber() {
-    var representation = this.__adaptationSet.getRepresentations()[0],
-        segmentList = getSegmentListForRepresentation(representation),
-        segmentListEndNumber = segmentList.getEndNumber();
-    return segmentListEndNumber;
-};
-
-
-MediaSet.prototype.getSegmentLists = function getSegmentLists() {
-    var representations = this.__adaptationSet.getRepresentations(),
-        segmentLists = representations.map(getSegmentListForRepresentation);
-    return segmentLists;
-};
-
-MediaSet.prototype.getSegmentListByBandwidth = function getSegmentListByBandwidth(bandwidth) {
-    var representations = this.__adaptationSet.getRepresentations(),
-        representationWithBandwidthMatch = findElementInArray(representations, function(representation) {
-            var representationBandwidth = representation.getBandwidth();
-            return (Number(representationBandwidth) === Number(bandwidth));
-        }),
-        segmentList = getSegmentListForRepresentation(representationWithBandwidthMatch);
-    return segmentList;
-};
-
-MediaSet.prototype.getAvailableBandwidths = function getAvailableBandwidths() {
-    return this.__adaptationSet.getRepresentations().map(
-        function(representation) {
-            return Number(representation.getBandwidth());
-    }).filter(
-        function(bandwidth) {
-            return existy(bandwidth);
-        }
-    );
-};
 
 module.exports = ManifestController;

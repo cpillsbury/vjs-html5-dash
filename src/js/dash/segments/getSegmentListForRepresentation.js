@@ -22,6 +22,16 @@ var existy = require('../../util/existy.js'),
     getStartNumberFromTemplate,
     getEndNumberFromTemplate;
 
+
+/**
+ *
+ * Function used to get the 'type' of a DASH Representation in a format expected by the MSE SourceBuffer. Used to
+ * create SourceBuffer instances that correspond to a given MediaSet (e.g. set of audio stream variants, video stream
+ * variants, etc.).
+ *
+ * @param representation    POJO DASH MPD Representation
+ * @returns {string}        The Representation's 'type' in a format expected by the MSE SourceBuffer
+ */
 getType = function(representation) {
     var codecStr = representation.getCodecs();
     var typeStr = representation.getMimeType();
