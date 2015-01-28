@@ -1,5 +1,7 @@
 var segmentTemplate = require('../src/js/dash/segments/segmentTemplate.js');
 
+QUnit.module('segmentTemplate');
+
 var templateStrNumber = 'ED_512_640K_MPEG2_video_$Number$.mp4';
 var templateStrNumberBandwidth = 'video-$Number$_$Bandwidth$bps.mp4';
 var templateStrRepresentationIdNumber = '$RepresentationID$/$Number$.m4s';

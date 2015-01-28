@@ -1,6 +1,8 @@
 var getMpd = require('../src/js/dash/mpd/getMpd.js'),
     getSegmentListForRepresentation = require('../src/js/dash/segments/getSegmentListForRepresentation.js');
 
+QUnit.module('getSegmentListForRepresentation()');
+
 var mpdExampleStaticSegmentTemplateString = '<?xml version="1.0" encoding="UTF-8"?>' +
     '<MPD xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns="urn:mpeg:DASH:schema:MPD:2011" xsi:schemaLocation="urn:mpeg:DASH:schema:MPD:2011 DASH-MPD.xsd" type="static" mediaPresentationDuration="PT260.266S" availabilityStartTime="2012-09-05T09:00:00Z" maxSegmentDuration="PT4.080S" minBufferTime="PT5.001S" profiles="urn:mpeg:dash:profile:isoff-live:2011">' +
         '<Period>' +
