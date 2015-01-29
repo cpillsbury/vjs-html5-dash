@@ -36,10 +36,10 @@ QUnit.test('loadManifest() calls callback param with expected args if request wa
         done = assert.async(),
         sourceUri = 'http://dash.edgesuite.net/envivio/dashpr/clear/Manifest.mpd',
         callback = function(data) {
-            var dataXml = (new XMLSerializer()).serializeToString(data.manifestXml);
+            var dataXmlStr = (new XMLSerializer()).serializeToString(data.manifestXml);
             assert.ok(true, 'callback called!');
             assert.ok(data, 'data passed into callback as arg');
-            assert.strictEqual(dataXml, xmlStr, 'data.manifestXml is expected value');
+            assert.strictEqual(dataXmlStr, xmlStr, 'data.manifestXml is expected value');
             done();
         };
 

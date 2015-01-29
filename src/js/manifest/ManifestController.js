@@ -124,7 +124,7 @@ ManifestController.prototype.getPlaylistType = function getPlaylistType() {
 ManifestController.prototype.getUpdateRate = function getUpdateRate() {
     var minimumUpdatePeriodStr = getMpd(this.__manifest).getMinimumUpdatePeriod(),
         minimumUpdatePeriod = parseMediaPresentationDuration(minimumUpdatePeriodStr);
-    return minimumUpdatePeriod;
+    return minimumUpdatePeriod || 0;
 };
 
 ManifestController.prototype.getShouldUpdate = function getShouldUpdate() {
