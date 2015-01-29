@@ -231,3 +231,33 @@ QUnit.test('successful MPD load updates media sets based on XML (dynamic/live ma
         mpdExampleDynamicSegmentTemplateString
     );
 });
+
+QUnit.test('reloads dynamic manifest based on @minimumUpdatePeriod', function(assert) {
+    var clock = sinon.useFakeTimers(),
+        sourceUri = 'http://dash.edgesuite.net/envivio/dashpr/clear/Manifest.mpd',
+        manifestController = new ManifestController(sourceUri);
+
+    manifestController.load();
+
+    requests[0].respond(
+        200,
+        { 'Content-Type': 'application/xml' },
+        mpdExampleDynamicSegmentTemplateString
+    );
+
+    clock.tick(29000);
+
+    assert.ok(requests.length < 2, 'request only called once thus far');
+
+    clock.tick(1000);
+
+    requests[1].respond(
+        200,
+        { 'Content-Type': 'application/xml' },
+        mpdExampleDynamicSegmentTemplateString
+    );
+
+    assert.strictEqual(requests.length, 2, 'request called twice now that minimumUpdatePeriod seconds have elapsed');
+});
+
+
