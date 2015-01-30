@@ -149,13 +149,58 @@ var existy = require('./util/existy.js'),
     MIN_DESIRED_BUFFER_SIZE = 20,
     MAX_DESIRED_BUFFER_SIZE = 40;
 
-function hasValue(object, value) {
-    if (!existy(object) || !existy(value)) { return false; }
-    for (var prop in object) {
-        if (object.hasOwnProperty(prop) && (object[prop] === value)) { return true; }
+var waitTimeToRecheckLive = function(currentTime, bufferedTimeRanges, segmentList) {
+    var currentRange = findTimeRangeEdge(currentTime, bufferedTimeRanges),
+        nextSegment,
+        safeLiveEdge,
+        timePastSafeLiveEdge;
+
+    if (!existy(currentRange)) { return 0; }
+
+    nextSegment = segmentList.getSegmentByTime(currentRange.getEnd());
+    safeLiveEdge = (Date.now() - (segmentList.getSegmentDuration() * 1000));
+    timePastSafeLiveEdge = nextSegment.getUTCWallClockStartTime() - safeLiveEdge;
+
+    if (timePastSafeLiveEdge < 0.003) { return 0; }
+
+    return timePastSafeLiveEdge;
+};
+
+var nextSegmentToLoad = function(currentTime, bufferedTimeRanges, segmentList) {
+    var currentRange = findTimeRangeEdge(currentTime, bufferedTimeRanges),
+        segmentToLoad;
+
+    if (existy(currentRange)) {
+        segmentToLoad = segmentList.getSegmentByTime(currentRange.getEnd());
+    } else if (segmentList.getIsLive()) {
+        segmentToLoad = segmentList.getSegmentByUTCWallClockTime(Date.now() - (segmentList.getSegmentDuration() * 1000));
+    } else {
+        // Otherwise (i.e. if VOD/static streams, get the segment @ currentTime).
+        segmentToLoad = segmentList.getSegmentByTime(currentTime);
     }
-    return false;
-}
+
+    return segmentToLoad;
+};
+
+var findTimeRangeEdge = function(currentTime, bufferedTimeRanges) {
+    var currentRange = bufferedTimeRanges.getTimeRangeByTime(currentTime),
+        i,
+        length,
+        timeRangeToCheck;
+
+    if (!existy(currentRange)) { return currentRange; }
+
+    i = currentRange.getIndex() + 1;
+    length = bufferedTimeRanges.getLength();
+
+    for (;i<length;i++) {
+        timeRangeToCheck = bufferedTimeRanges.getTimeRangeByIndex(i);
+        if((timeRangeToCheck.getStart() - currentRange.getEnd()) > 0.003) { break; }
+        currentRange = timeRangeToCheck;
+    }
+
+    return currentRange;
+};
 
 /**
  *
@@ -179,28 +224,7 @@ function MediaTypeLoader(segmentLoader, sourceBufferDataQueue, mediaType, tech) 
  */
 MediaTypeLoader.prototype.eventList = {
     RECHECK_SEGMENT_LOADING: 'recheckSegmentLoading',
-    RECHECK_CURRENT_SEGMENT_LIST: 'recheckCurrentSegmentList',
-    LOAD_STATE_CHANGED: 'loadStateChanged'
-};
-
-MediaTypeLoader.prototype.loadStates = {
-    NOT_LOADING: -10,
-    WAITING_TO_CHECK: 0,
-    CHECKING_STARTED: 10,
-    WAITING_TO_DOWNLOAD: 20,
-    DOWNLOAD_STARTED: 30,
-    ADD_TO_BUFFER_STARTED: 40,
-    LOADING_COMPLETE: 50
-};
-
-MediaTypeLoader.prototype.getLoadState = function() {
-    return this.__loadState;
-};
-
-MediaTypeLoader.prototype.setLoadState = function(loadState) {
-    if (loadState === this.__loadState || !hasValue(this.loadStates, loadState)) { return; }
-    this.__loadState = loadState;
-    this.trigger({ type:this.eventList.LOAD_STATE_CHANGED, target:this, data:loadState });
+    RECHECK_CURRENT_SEGMENT_LIST: 'recheckCurrentSegmentList'
 };
 
 MediaTypeLoader.prototype.getMediaType = function() { return this.__mediaType; };
@@ -213,10 +237,7 @@ MediaTypeLoader.prototype.getSourceBufferDataQueue = function() { return this.__
  * Kicks off segment loading for the media set
  */
 MediaTypeLoader.prototype.startLoadingSegments = function() {
-    this.startLoadingSegmentsForStaticPlaylist();
-};
 
-MediaTypeLoader.prototype.startLoadingSegmentsForStaticPlaylist = function() {
     var self = this,
         nowUTC;
 
@@ -227,10 +248,11 @@ MediaTypeLoader.prototype.startLoadingSegmentsForStaticPlaylist = function() {
     // NOTE: Store a reference to the event handler to potentially remove it later.
     this.__recheckSegmentLoadingHandler = function(event) {
         self.trigger({ type:self.eventList.RECHECK_CURRENT_SEGMENT_LIST, target:self });
-        self.__checkSegmentLoading(MIN_DESIRED_BUFFER_SIZE, MAX_DESIRED_BUFFER_SIZE);
+        self.__checkSegmentLoading(self.__tech.currentTime(), MIN_DESIRED_BUFFER_SIZE, MAX_DESIRED_BUFFER_SIZE);
     };
 
     this.on(this.eventList.RECHECK_SEGMENT_LOADING, this.__recheckSegmentLoadingHandler);
+    this.__tech.on('seeking', this.__recheckSegmentLoadingHandler);
 
     if (this.__segmentLoader.getCurrentSegmentList().getIsLive()) {
         nowUTC = Date.now();
@@ -244,109 +266,74 @@ MediaTypeLoader.prototype.startLoadingSegmentsForStaticPlaylist = function() {
     }
 
     // Manually check on loading segments the first time around.
-    this.__checkSegmentLoading(MIN_DESIRED_BUFFER_SIZE, MAX_DESIRED_BUFFER_SIZE);
+    this.__checkSegmentLoading(this.__tech.currentTime(), MIN_DESIRED_BUFFER_SIZE, MAX_DESIRED_BUFFER_SIZE);
 };
 
 MediaTypeLoader.prototype.stopLoadingSegments = function() {
     if (!existy(this.__recheckSegmentLoadingHandler)) { return; }
 
     this.off(this.eventList.RECHECK_SEGMENT_LOADING, this.__recheckSegmentLoadingHandler);
+    this.__tech.off('seeking', this.__recheckSegmentLoadingHandler);
     this.__recheckSegmentLoadingHandler = undefined;
+    if (existy(this.__waitTimerId)) {
+        clearTimeout(this.__waitTimerId);
+    }
+    this.__waitTimerId = undefined;
 };
 
-/**
- *
- * @param minDesiredBufferSize {number} The stipulated minimum amount of time (in seconds) we want in the playback buffer
- *                                      (relative to the current playback time) for the media type.
- * @param maxDesiredBufferSize {number} The stipulated maximum amount of time (in seconds) we want in the playback buffer
- *                                      (relative to the current playback time) for the media type.
- * @private
- */
-MediaTypeLoader.prototype.__checkSegmentLoading = function(minDesiredBufferSize, maxDesiredBufferSize) {
-    // TODO: Use segment duration with currentTime & currentBufferSize to calculate which segment to grab to avoid edge cases w/rounding & precision
-    var self = this,
-        tech = self.__tech,
-        segmentLoader = self.__segmentLoader,
-        sourceBufferDataQueue = self.__sourceBufferDataQueue,
-        currentTime = tech.currentTime(),
-        currentBufferSize,
-        currentSegmentList = segmentLoader.getCurrentSegmentList(),
-        segmentDuration = currentSegmentList.getSegmentDuration(),
-        totalDuration = currentSegmentList.getTotalDuration(),
-        downloadRoundTripTime,
-        segmentDownloadDelay,
-        timeRangeList = sourceBufferDataQueue.getBufferedTimeRangeListAlignedToSegmentDuration(segmentDuration),
-        segmentToDownload = self.getNextSegmentToLoad(currentTime, currentSegmentList, timeRangeList),
-        downloadPoint = segmentToDownload.getStartTime();
+var waitTimeToRecheckStatic = function(currentTime,
+                                 bufferedTimeRanges,
+                                 segmentDuration,
+                                 lastDownloadRoundTripTime,
+                                 minDesiredBufferSize,
+                                 maxDesiredBufferSize) {
+    var currentRange = findTimeRangeEdge(currentTime, bufferedTimeRanges),
+        bufferSize;
 
-    currentBufferSize = existy(timeRangeList) && timeRangeList.getLength() > 0 ? downloadPoint - currentTime : 0;
+    if (!existy(currentRange)) { return 0; }
 
-    // TODO: Ugly separation of live vs. VOD. Refactor.
-    if (currentSegmentList.getIsLive()) {
-        if (existy(timeRangeList) && timeRangeList.getLength() <= 0) {
-            self.__loadSegmentAtTime(downloadPoint);
-        } else {
-            downloadRoundTripTime = segmentLoader.getLastDownloadRoundTripTimeSpan();
-            segmentDownloadDelay = segmentDuration - downloadRoundTripTime;
-            setTimeout(function() {
-                segmentToDownload = self.getNextSegmentToLoad(currentTime, currentSegmentList, timeRangeList);
-                downloadPoint = segmentToDownload.getStartTime();
-                self.__loadSegmentAtTime(downloadPoint);
-            }, Math.floor(segmentDownloadDelay * 1000));
-        }
-        return;
+    bufferSize = currentRange.getEnd() - currentTime;
+
+    if (bufferSize < minDesiredBufferSize) { return 0; }
+    else if (bufferSize < maxDesiredBufferSize) { return (segmentDuration - lastDownloadRoundTripTime) * 1000; }
+
+    return Math.floor(Math.min(segmentDuration, 2) * 1000);
+};
+
+MediaTypeLoader.prototype.__checkSegmentLoading = function(currentTime, minDesiredBufferSize, maxDesiredBufferSize) {
+    var lastDownloadRoundTripTime = this.__segmentLoader.getLastDownloadRoundTripTimeSpan(),
+        segmentList = this.__segmentLoader.getCurrentSegmentList(),
+        segmentDuration = segmentList.getSegmentDuration(),
+        bufferedTimeRanges = this.__sourceBufferDataQueue.getBufferedTimeRangeListAlignedToSegmentDuration(segmentDuration),
+        isLive = segmentList.getIsLive(),
+        waitTime,
+        segmentToDownload,
+        self = this;
+
+    if (existy(this.__waitTimerId)) { clearTimeout(this.__waitTimerId); }
+
+    function waitFunction() {
+        self.__checkSegmentLoading(self.__tech.currentTime(), minDesiredBufferSize, maxDesiredBufferSize);
+        self.__waitTimerId = undefined;
     }
 
-    // Local function used to notify that we should recheck segment loading. Used when we don't need to currently load segments.
-    function deferredRecheckNotification() {
-        var recheckWaitTimeMS = Math.floor(Math.min(segmentDuration, 2) * 1000);
-        recheckWaitTimeMS = Math.floor(Math.min(segmentDuration, 2) * 1000);
-        setTimeout(function() {
-            self.trigger({ type:self.eventList.RECHECK_SEGMENT_LOADING, target:self });
-        }, recheckWaitTimeMS);
-    }
-
-    // If the proposed time to download is after the end time of the media or we have more in the buffer than the max desired,
-    // wait a while and then trigger an event notifying that (if anyone's listening) we should recheck to see if conditions
-    // have changed.
-    // TODO: Handle condition where final segment's duration is less than 1/2 standard segment's duration.
-    if (downloadPoint >= totalDuration) {
-        deferredRecheckNotification();
-        return;
-    }
-
-    if (currentBufferSize < minDesiredBufferSize) {
-        // Condition 2: There's something in the source buffer starting at the current time for the media type, but it's
-        //              below the minimum desired buffer size (seconds of playback in the buffer for the media type)
-        // Response: Download the segment that would immediately follow the end of the buffer (relative to the current time).
-        //           right now.
-        self.__loadSegmentAtTime(downloadPoint);
-    } else if (currentBufferSize < maxDesiredBufferSize) {
-        // Condition 3: The buffer is full more than the minimum desired buffer size but not yet more than the maximum desired
-        //              buffer size.
-        downloadRoundTripTime = segmentLoader.getLastDownloadRoundTripTimeSpan();
-        segmentDownloadDelay = segmentDuration - downloadRoundTripTime;
-        if (segmentDownloadDelay <= 0) {
-            // Condition 3a: It took at least as long as the duration of a segment (i.e. the amount of time it would take
-            //               to play a given segment) to download the previous segment.
-            // Response: Download the segment that would immediately follow the end of the buffer (relative to the current
-            //           time) right now.
-            self.__loadSegmentAtTime(downloadPoint);
-        } else {
-            // Condition 3b: Downloading the previous segment took less time than the duration of a segment (i.e. the amount
-            //               of time it would take to play a given segment).
-            // Response: Download the segment that would immediately follow the end of the buffer (relative to the current
-            //           time), but wait to download at the rate of playback (segment duration - time to download).
-            setTimeout(function() {
-                self.__loadSegmentAtTime(downloadPoint);
-            }, Math.floor(segmentDownloadDelay * 1000));
-        }
+    if (isLive) {
+        waitTime = waitTimeToRecheckLive(currentTime, bufferedTimeRanges, segmentList);
     } else {
-        // Condition 4 (default): The buffer has at least the max desired buffer size in it or none of the aforementioned
-        //                        conditions were met.
-        // Response: Wait a while and then trigger an event notifying that (if anyone's listening) we should recheck to
-        //           see if conditions have changed.
-        deferredRecheckNotification();
+        waitTime = waitTimeToRecheckStatic(currentTime, bufferedTimeRanges, segmentDuration, lastDownloadRoundTripTime, minDesiredBufferSize, maxDesiredBufferSize);
+    }
+
+    // If wait time was less than 50ms, assume we should simply load now.
+    if (waitTime > 50) {
+        this.__waitTimerId = setTimeout(waitFunction, waitTime);
+    } else {
+        segmentToDownload = nextSegmentToLoad(currentTime, bufferedTimeRanges, segmentList);
+        if (existy(segmentToDownload)) {
+            this.__loadSegment(segmentToDownload);
+        } else {
+            // Apparently no segment to load, so go into a holding pattern.
+            this.waitTimerId = setTimeout(waitFunction, 2000);
+        }
     }
 };
 
@@ -359,11 +346,11 @@ MediaTypeLoader.prototype.__checkSegmentLoading = function(minDesiredBufferSize,
  *                                  media presentation time requested.
  * @private
  */
-MediaTypeLoader.prototype.__loadSegmentAtTime = function loadSegmentAtTime(presentationTime) {
+MediaTypeLoader.prototype.__loadSegment = function loadSegment(segment) {
     var self = this,
         segmentLoader = self.__segmentLoader,
         sourceBufferDataQueue = self.__sourceBufferDataQueue,
-        hasNextSegment = segmentLoader.loadSegmentAtTime(presentationTime);
+        hasNextSegment = segmentLoader.loadSegmentAtTime(segment.getStartTime());
 
     if (!hasNextSegment) { return hasNextSegment; }
 
@@ -377,38 +364,6 @@ MediaTypeLoader.prototype.__loadSegmentAtTime = function loadSegmentAtTime(prese
     });
 
     return hasNextSegment;
-};
-
-// TODO: No instance-level dependencies. Make independent function?
-MediaTypeLoader.prototype.getNextSegmentToLoad = function(currentTime, segmentList, sourceBufferTimeRangeList) {
-    var timeRangeObj = sourceBufferTimeRangeList.getTimeRangeByTime(currentTime),
-        previousTimeRangeObj,
-        i,
-        length;
-
-    if (!existy(timeRangeObj)) {
-        if (segmentList.getIsLive()) {
-            var nowSegment = segmentList.getSegmentByUTCWallClockTime(Date.now());
-            return segmentList.getSegmentByNumber(nowSegment.getNumber() - 1);
-        } else {
-            return segmentList.getSegmentByTime(currentTime);
-        }
-    }
-
-    // Find the true buffer edge, since the MSE buffer time ranges might be falsely reporting that there are
-    // multiple time ranges when they are temporally adjacent.
-    length = sourceBufferTimeRangeList.getLength();
-    i = timeRangeObj.getIndex() + 1;
-    for (;i<length;i++) {
-        previousTimeRangeObj = timeRangeObj;
-        timeRangeObj = sourceBufferTimeRangeList.getTimeRangeByIndex(i);
-        if ((timeRangeObj.getStart() - previousTimeRangeObj.getEnd()) > 0.003) {
-            return segmentList.getSegmentByTime(previousTimeRangeObj.getEnd());
-        }
-    }
-
-    // If we're here, either a) there was only one timeRange in the list or b) all of the timeRanges in the list were adjacent.
-    return segmentList.getSegmentByTime(timeRangeObj.getEnd());
 };
 
 // Add event dispatcher functionality to prototype.
@@ -526,8 +481,6 @@ function PlaylistLoader(manifestController, mediaSource, tech) {
     function changePlaybackRateEventsHandler(event) {
         var readyState = tech.el().readyState,
             playbackRate = (readyState === 4) ? 1 : 0;
-        console.log('In PlaylistLoader Playback Rate Handler\n\n');
-        console.log('playbackRate: ' + playbackRate + ', readyState: ' + readyState);
         tech.setPlaybackRate(playbackRate);
     }
 
