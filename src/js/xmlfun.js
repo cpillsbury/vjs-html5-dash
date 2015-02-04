@@ -128,11 +128,6 @@ var getMultiLevelElementList = function(nodeName, shouldStopPred) {
     };
 };
 
-// TODO: Implement me for BaseURL or use existing fn (See: mpd.js buildBaseUrl())
-/*var buildHierarchicallyStructuredValue = function(valueFn, buildFn, stopPred) {
-
-};*/
-
 // Publish External API:
 var xmlfun = {};
 xmlfun.existy = existy;

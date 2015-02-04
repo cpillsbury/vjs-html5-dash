@@ -1,15 +1,37 @@
 'use strict';
 
 var existy = require('./util/existy.js'),
-    isFunction = require('./util/isFunction.js'),
+    isNumber = require('./util/isNumber.js'),
     extendObject = require('./util/extendObject.js'),
     EventDispatcherMixin = require('./events/EventDispatcherMixin.js'),
+    loadSegment = require('./segments/loadSegment.js'),
     // TODO: Determine appropriate default size (or base on segment n x size/duration?)
     // Must consider ABR Switching & Viewing experience of already-buffered segments.
     MIN_DESIRED_BUFFER_SIZE = 20,
-    MAX_DESIRED_BUFFER_SIZE = 40;
+    MAX_DESIRED_BUFFER_SIZE = 40,
+    DEFAULT_RETRY_COUNT = 3,
+    DEFAULT_RETRY_INTERVAL = 250;
 
-var waitTimeToRecheckLive = function(currentTime, bufferedTimeRanges, segmentList) {
+function waitTimeToRecheckStatic(currentTime,
+                                       bufferedTimeRanges,
+                                       segmentDuration,
+                                       lastDownloadRoundTripTime,
+                                       minDesiredBufferSize,
+                                       maxDesiredBufferSize) {
+    var currentRange = findTimeRangeEdge(currentTime, bufferedTimeRanges),
+        bufferSize;
+
+    if (!existy(currentRange)) { return 0; }
+
+    bufferSize = currentRange.getEnd() - currentTime;
+
+    if (bufferSize < minDesiredBufferSize) { return 0; }
+    else if (bufferSize < maxDesiredBufferSize) { return (segmentDuration - lastDownloadRoundTripTime) * 1000; }
+
+    return Math.floor(Math.min(segmentDuration, 2) * 1000);
+}
+
+function waitTimeToRecheckLive(currentTime, bufferedTimeRanges, segmentList) {
     var currentRange = findTimeRangeEdge(currentTime, bufferedTimeRanges),
         nextSegment,
         safeLiveEdge,
@@ -24,9 +46,9 @@ var waitTimeToRecheckLive = function(currentTime, bufferedTimeRanges, segmentLis
     if (timePastSafeLiveEdge < 0.003) { return 0; }
 
     return timePastSafeLiveEdge;
-};
+}
 
-var nextSegmentToLoad = function(currentTime, bufferedTimeRanges, segmentList) {
+function nextSegmentToLoad(currentTime, bufferedTimeRanges, segmentList) {
     var currentRange = findTimeRangeEdge(currentTime, bufferedTimeRanges),
         segmentToLoad;
 
@@ -40,9 +62,9 @@ var nextSegmentToLoad = function(currentTime, bufferedTimeRanges, segmentList) {
     }
 
     return segmentToLoad;
-};
+}
 
-var findTimeRangeEdge = function(currentTime, bufferedTimeRanges) {
+function findTimeRangeEdge(currentTime, bufferedTimeRanges) {
     var currentRange = bufferedTimeRanges.getTimeRangeByTime(currentTime),
         i,
         length,
@@ -60,23 +82,30 @@ var findTimeRangeEdge = function(currentTime, bufferedTimeRanges) {
     }
 
     return currentRange;
-};
+}
 
 /**
  *
  * MediaTypeLoader coordinates between segment downloading and adding segments to the MSE source buffer for a given media type (e.g. 'audio' or 'video').
  *
- * @param segmentLoader {SegmentLoader}                 object instance that handles downloading segments for the media set
  * @param sourceBufferDataQueue {SourceBufferDataQueue} object instance that handles adding segments to MSE SourceBuffer
  * @param mediaType {string}                            string representing the media type (e.g. 'audio' or 'video') for the media set
  * @param tech {object}                                 video.js Html5 tech instance.
  * @constructor
  */
-function MediaTypeLoader(segmentLoader, sourceBufferDataQueue, mediaType, tech) {
-    this.__segmentLoader = segmentLoader;
-    this.__sourceBufferDataQueue = sourceBufferDataQueue;
+function MediaTypeLoader(manifestController, mediaType, sourceBufferDataQueue, tech) {
+    if (!existy(manifestController)) { throw new Error('MediaTypeLoader must be initialized with a manifestController!'); }
+    if (!existy(mediaType)) { throw new Error('MediaTypeLoader must be initialized with a mediaType!'); }
+    // NOTE: Rather than passing in a reference to the MediaSet instance for a media type, we pass in a reference to the
+    // controller & the mediaType so that the MediaTypeLoader doesn't need to be aware of state changes/updates to
+    // the manifest data (say, if the playlist is dynamic/'live').
+    this.__manifestController = manifestController;
     this.__mediaType = mediaType;
+    this.__sourceBufferDataQueue = sourceBufferDataQueue;
     this.__tech = tech;
+    // Currently, set the default bandwidth to the 0th index of the available bandwidths. Can changed to whatever seems
+    // appropriate (CJP).
+    this.setCurrentBandwidth(this.getAvailableBandwidths()[0]);
 }
 
 /**
@@ -84,14 +113,46 @@ function MediaTypeLoader(segmentLoader, sourceBufferDataQueue, mediaType, tech) 
  */
 MediaTypeLoader.prototype.eventList = {
     RECHECK_SEGMENT_LOADING: 'recheckSegmentLoading',
-    RECHECK_CURRENT_SEGMENT_LIST: 'recheckCurrentSegmentList'
+    RECHECK_CURRENT_SEGMENT_LIST: 'recheckCurrentSegmentList',
+    DOWNLOAD_DATA_UPDATE: 'downloadDataUpdate'
 };
 
-MediaTypeLoader.prototype.getMediaType = function() { return this.__mediaType; };
+MediaTypeLoader.prototype.getMediaType = function() { return this.getMediaSet().getMediaType(); };
 
-MediaTypeLoader.prototype.getSegmentLoader = function() { return this.__segmentLoader; };
+MediaTypeLoader.prototype.getMediaSet = function() { return this.__manifestController.getMediaSetByType(this.__mediaType); };
 
 MediaTypeLoader.prototype.getSourceBufferDataQueue = function() { return this.__sourceBufferDataQueue; };
+
+MediaTypeLoader.prototype.getCurrentSegmentList = function getCurrentSegmentList() {
+    return this.getMediaSet().getSegmentListByBandwidth(this.getCurrentBandwidth());
+};
+
+MediaTypeLoader.prototype.getCurrentBandwidth = function getCurrentBandwidth() { return this.__currentBandwidth; };
+
+/**
+ * Sets the current bandwidth, which corresponds to the currently selected segment list (i.e. the segment list in the
+ * media set from which we should be downloading segments).
+ * @param bandwidth {number}
+ */
+MediaTypeLoader.prototype.setCurrentBandwidth = function setCurrentBandwidth(bandwidth) {
+    if (!isNumber(bandwidth)) {
+        throw new Error('MediaTypeLoader::setCurrentBandwidth() expects a numeric value for bandwidth!');
+    }
+    var availableBandwidths = this.getAvailableBandwidths();
+    if (availableBandwidths.indexOf(bandwidth) < 0) {
+        throw new Error('MediaTypeLoader::setCurrentBandwidth() must be set to one of the following values: ' + availableBandwidths.join(', '));
+    }
+    if (bandwidth === this.__currentBandwidth) { return; }
+    // Track when we've switch bandwidths, since we'll need to (re)load the initialization segment for the segment list
+    // whenever we switch between segment lists. This allows MediaTypeLoader instances to automatically do this, hiding those
+    // details from the outside.
+    this.__currentBandwidthChanged = true;
+    this.__currentBandwidth = bandwidth;
+};
+
+MediaTypeLoader.prototype.getAvailableBandwidths = function() { return this.getMediaSet().getAvailableBandwidths(); };
+
+MediaTypeLoader.prototype.getLastDownloadRoundTripTimeSpan = function() { return this.__lastDownloadRoundTripTimeSpan || 0; };
 
 /**
  * Kicks off segment loading for the media set
@@ -114,10 +175,10 @@ MediaTypeLoader.prototype.startLoadingSegments = function() {
     this.on(this.eventList.RECHECK_SEGMENT_LOADING, this.__recheckSegmentLoadingHandler);
     this.__tech.on('seeking', this.__recheckSegmentLoadingHandler);
 
-    if (this.__segmentLoader.getCurrentSegmentList().getIsLive()) {
+    if (this.getCurrentSegmentList().getIsLive()) {
         nowUTC = Date.now();
         this.one(this.eventList.RECHECK_SEGMENT_LOADING, function(event) {
-            var seg = self.__segmentLoader.getCurrentSegmentList().getSegmentByUTCWallClockTime(nowUTC),
+            var seg = self.getCurrentSegmentList().getSegmentByUTCWallClockTime(nowUTC),
                 segUTCStartTime = seg.getUTCWallClockStartTime(),
                 timeOffset = (nowUTC - segUTCStartTime)/1000,
                 seekToTime = self.__sourceBufferDataQueue.getBufferedTimeRangeListAlignedToSegmentDuration(seg.getDuration()).getTimeRangeByIndex(0).getStart() + timeOffset;
@@ -137,32 +198,14 @@ MediaTypeLoader.prototype.stopLoadingSegments = function() {
     this.__recheckSegmentLoadingHandler = undefined;
     if (existy(this.__waitTimerId)) {
         clearTimeout(this.__waitTimerId);
+        this.__waitTimerId = undefined;
     }
-    this.__waitTimerId = undefined;
-};
-
-var waitTimeToRecheckStatic = function(currentTime,
-                                 bufferedTimeRanges,
-                                 segmentDuration,
-                                 lastDownloadRoundTripTime,
-                                 minDesiredBufferSize,
-                                 maxDesiredBufferSize) {
-    var currentRange = findTimeRangeEdge(currentTime, bufferedTimeRanges),
-        bufferSize;
-
-    if (!existy(currentRange)) { return 0; }
-
-    bufferSize = currentRange.getEnd() - currentTime;
-
-    if (bufferSize < minDesiredBufferSize) { return 0; }
-    else if (bufferSize < maxDesiredBufferSize) { return (segmentDuration - lastDownloadRoundTripTime) * 1000; }
-
-    return Math.floor(Math.min(segmentDuration, 2) * 1000);
 };
 
 MediaTypeLoader.prototype.__checkSegmentLoading = function(currentTime, minDesiredBufferSize, maxDesiredBufferSize) {
-    var lastDownloadRoundTripTime = this.__segmentLoader.getLastDownloadRoundTripTimeSpan(),
-        segmentList = this.__segmentLoader.getCurrentSegmentList(),
+    var lastDownloadRoundTripTime = this.getLastDownloadRoundTripTimeSpan(),
+        loadInitialization = this.__currentBandwidthChanged,
+        segmentList = this.getCurrentSegmentList(),
         segmentDuration = segmentList.getSegmentDuration(),
         bufferedTimeRanges = this.__sourceBufferDataQueue.getBufferedTimeRangeListAlignedToSegmentDuration(segmentDuration),
         isLive = segmentList.getIsLive(),
@@ -170,7 +213,12 @@ MediaTypeLoader.prototype.__checkSegmentLoading = function(currentTime, minDesir
         segmentToDownload,
         self = this;
 
-    if (existy(this.__waitTimerId)) { clearTimeout(this.__waitTimerId); }
+    // If we're here but there's a waitTimerId, we should clear it out so we don't do
+    // an additional recheck unnecessarily.
+    if (existy(this.__waitTimerId)) {
+        clearTimeout(this.__waitTimerId);
+        this.__waitTimerId = undefined;
+    }
 
     function waitFunction() {
         self.__checkSegmentLoading(self.__tech.currentTime(), minDesiredBufferSize, maxDesiredBufferSize);
@@ -183,47 +231,87 @@ MediaTypeLoader.prototype.__checkSegmentLoading = function(currentTime, minDesir
         waitTime = waitTimeToRecheckStatic(currentTime, bufferedTimeRanges, segmentDuration, lastDownloadRoundTripTime, minDesiredBufferSize, maxDesiredBufferSize);
     }
 
-    // If wait time was less than 50ms, assume we should simply load now.
     if (waitTime > 50) {
+        // If wait time was > 50ms, re-check in waitTime ms.
         this.__waitTimerId = setTimeout(waitFunction, waitTime);
     } else {
+        // Otherwise, start loading now.
         segmentToDownload = nextSegmentToLoad(currentTime, bufferedTimeRanges, segmentList);
         if (existy(segmentToDownload)) {
-            this.__loadSegment(segmentToDownload);
+            // If we're here but there's a segmentLoadXhr request, we've kicked off a recheck in the middle of a segment
+            // download. However, unless we're loading a new segment (ie not waiting), there's no reason to abort the current
+            // request, so only cancel here (CJP).
+            if (existy(this.__segmentLoadXhr)) {
+                this.__segmentLoadXhr.abort();
+                this.__segmentLoadXhr = undefined;
+            }
+
+            this.__loadAndBufferSegment(segmentToDownload, segmentList, loadInitialization);
         } else {
             // Apparently no segment to load, so go into a holding pattern.
-            this.waitTimerId = setTimeout(waitFunction, 2000);
+            this.__waitTimerId = setTimeout(waitFunction, 2000);
         }
     }
 };
 
-/**
- * Download a segment from the current segment list corresponding to the stipulated media presentation time and add it
- * to the source buffer.
- *
- * @param presentationTime {number} The media presentation time for which we want to download and buffer a segment
- * @returns {boolean}               Whether or not the there are subsequent segments in the segment list, relative to the
- *                                  media presentation time requested.
- * @private
- */
-MediaTypeLoader.prototype.__loadSegment = function loadSegment(segment) {
+MediaTypeLoader.prototype.__loadAndBufferSegment = function loadAndBufferSegment(segment, segmentList, loadInitialization) {
+
     var self = this,
-        segmentLoader = self.__segmentLoader,
-        sourceBufferDataQueue = self.__sourceBufferDataQueue,
-        hasNextSegment = segmentLoader.loadSegmentAtTime(segment.getStartTime());
+        retryCount = DEFAULT_RETRY_COUNT,
+        retryInterval = DEFAULT_RETRY_INTERVAL,
+        segmentsToBuffer = [],
+        requestStartTimeSeconds;
 
-    if (!hasNextSegment) { return hasNextSegment; }
+    function successInitialization(data) {
+        segmentsToBuffer.push(data.response);
+        requestStartTimeSeconds = new Date().getTime()/1000;
+        self.__currentBandwidthChanged = false;
+        self.__segmentLoadXhr = loadSegment(segment, success, fail, self);
+    }
 
-    segmentLoader.one(segmentLoader.eventList.SEGMENT_LOADED, function segmentLoadedHandler(event) {
+    function success(data) {
+        var sourceBufferDataQueue = self.__sourceBufferDataQueue;
+
+        self.__lastDownloadRoundTripTimeSpan = ((new Date().getTime())/1000) - requestStartTimeSeconds;
+        segmentsToBuffer.push(data.response);
+        self.__segmentLoadXhr = undefined;
+
+        self.trigger(
+            {
+                type:self.eventList.DOWNLOAD_DATA_UPDATE,
+                target: self,
+                data: {
+                    rtt: self.__lastDownloadRoundTripTimeSpan,
+                    playbackTime: segment.getDuration(),
+                    bandwidth: segmentList.getBandwidth()
+                }
+            }
+        );
+
         sourceBufferDataQueue.one(sourceBufferDataQueue.eventList.QUEUE_EMPTY, function(event) {
             // Once we've completed downloading and buffering the segment, dispatch event to notify that we should recheck
             // whether or not we should load another segment and, if so, which. (See: __checkSegmentLoading() method, above)
             self.trigger({ type:self.eventList.RECHECK_SEGMENT_LOADING, target:self });
         });
-        sourceBufferDataQueue.addToQueue(event.data);
-    });
 
-    return hasNextSegment;
+        sourceBufferDataQueue.addToQueue(segmentsToBuffer);
+    }
+
+    function fail(data) {
+        if (--retryCount <= 0) { return; }
+        console.log('Failed to load segment @ ' + segment.getUrl() + '. Request Status: ' + data.status);
+        setTimeout(function() {
+            requestStartTimeSeconds = (new Date().getTime())/1000;
+            self.__segmentLoadXhr = loadSegment(data.requestedSegment, success, fail, self);
+        }, retryInterval);
+    }
+
+    if (loadInitialization) {
+        self.__segmentLoadXhr = loadSegment(segmentList.getInitialization(), successInitialization, fail, self);
+    } else {
+        requestStartTimeSeconds = new Date().getTime()/1000;
+        self.__segmentLoadXhr = loadSegment(segment, success, fail, self);
+    }
 };
 
 // Add event dispatcher functionality to prototype.

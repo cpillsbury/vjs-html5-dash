@@ -1,11 +1,11 @@
 'use strict';
 
-var isFunction = require('../util/isFunction.js'),
-    isArray = require('../util/isArray.js'),
-    isNumber = require('../util/isNumber.js'),
-    existy = require('../util/existy.js'),
-    extendObject = require('../util/extendObject.js'),
-    EventDispatcherMixin = require('../events/EventDispatcherMixin.js');
+var isFunction = require('./util/isFunction.js'),
+    isArray = require('./util/isArray.js'),
+    isNumber = require('./util/isNumber.js'),
+    existy = require('./util/existy.js'),
+    extendObject = require('./util/extendObject.js'),
+    EventDispatcherMixin = require('./events/EventDispatcherMixin.js');
 
 function createTimeRangeObject(sourceBuffer, index, transformFn) {
     if (!isFunction(transformFn)) {

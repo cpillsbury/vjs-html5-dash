@@ -1,8 +1,7 @@
 'use strict';
 
 var existy = require('./util/existy.js'),
-    SegmentLoader = require('./segments/SegmentLoader.js'),
-    SourceBufferDataQueue = require('./sourceBuffer/SourceBufferDataQueue.js'),
+    SourceBufferDataQueue = require('./SourceBufferDataQueue.js'),
     MediaTypeLoader = require('./MediaTypeLoader.js'),
     selectSegmentList = require('./selectSegmentList.js'),
     mediaTypes = require('./manifest/MediaTypes.js');
@@ -16,9 +15,8 @@ function createSourceBufferDataQueueByType(manifestController, mediaSource, medi
 }
 
 function createMediaTypeLoaderForType(manifestController, mediaSource, mediaType, tech) {
-    var segmentLoader = new SegmentLoader(manifestController, mediaType),
-        sourceBufferDataQueue = createSourceBufferDataQueueByType(manifestController, mediaSource, mediaType);
-    return new MediaTypeLoader(segmentLoader, sourceBufferDataQueue, mediaType, tech);
+    var sourceBufferDataQueue = createSourceBufferDataQueueByType(manifestController, mediaSource, mediaType);
+    return new MediaTypeLoader(manifestController, mediaType, sourceBufferDataQueue, tech);
 }
 
 /**
@@ -57,9 +55,8 @@ function PlaylistLoader(manifestController, mediaSource, tech) {
 
     function kickoffMediaTypeLoader(mediaTypeLoader) {
         // MediaSet-specific variables
-        var segmentLoader = mediaTypeLoader.getSegmentLoader(),
-            downloadRateRatio = 1.0,
-            currentSegmentListBandwidth = segmentLoader.getCurrentSegmentList().getBandwidth(),
+        var downloadRateRatio = 1.0,
+            currentSegmentListBandwidth = mediaTypeLoader.getCurrentBandwidth(),
             mediaType = mediaTypeLoader.getMediaType();
 
         // Listen for event telling us to recheck which segment list the segments should be loaded from.
@@ -80,12 +77,12 @@ function PlaylistLoader(manifestController, mediaSource, tech) {
 
             // TODO: Should we refactor to set based on segmentList instead?
             // (Potentially) update which segment list the segments should be loaded from (based on segment list's bandwidth/bitrate)
-            segmentLoader.setCurrentBandwidth(selectedSegmentList.getBandwidth());
+            mediaTypeLoader.setCurrentBandwidth(selectedSegmentList.getBandwidth());
         });
 
         // Update the download rate (round trip time to download a segment of a given average bandwidth/bitrate) to use
         // with choosing which stream variant to load segments from.
-        segmentLoader.on(segmentLoader.eventList.DOWNLOAD_DATA_UPDATE, function(event) {
+        mediaTypeLoader.on(mediaTypeLoader.eventList.DOWNLOAD_DATA_UPDATE, function(event) {
             downloadRateRatio = event.data.playbackTime / event.data.rtt;
             currentSegmentListBandwidth = event.data.bandwidth;
         });
