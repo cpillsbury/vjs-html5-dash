@@ -129,17 +129,17 @@ var getMultiLevelElementList = function(nodeName, shouldStopPred) {
 };
 
 // Publish External API:
-var xmlfun = {};
-xmlfun.existy = existy;
-xmlfun.truthy = truthy;
+var xmlFun = {};
+xmlFun.existy = existy;
+xmlFun.truthy = truthy;
 
-xmlfun.getNodeListByName = getNodeListByName;
-xmlfun.hasMatchingAttribute = hasMatchingAttribute;
-xmlfun.getInheritableAttribute = getInheritableAttribute;
-xmlfun.getAncestors = getAncestors;
-xmlfun.getAttrFn = getAttrFn;
-xmlfun.preApplyArgsFn = preApplyArgsFn;
-xmlfun.getInheritableElement = getInheritableElement;
-xmlfun.getMultiLevelElementList = getMultiLevelElementList;
+xmlFun.getNodeListByName = getNodeListByName;
+xmlFun.hasMatchingAttribute = hasMatchingAttribute;
+xmlFun.getInheritableAttribute = getInheritableAttribute;
+xmlFun.getAncestors = getAncestors;
+xmlFun.getAttrFn = getAttrFn;
+xmlFun.preApplyArgsFn = preApplyArgsFn;
+xmlFun.getInheritableElement = getInheritableElement;
+xmlFun.getMultiLevelElementList = getMultiLevelElementList;
 
-module.exports = xmlfun;
+module.exports = function getXmlFun() { return xmlFun; };

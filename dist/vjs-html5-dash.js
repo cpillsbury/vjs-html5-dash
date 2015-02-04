@@ -137,7 +137,7 @@ MediaSet.prototype.getAvailableBandwidths = function getAvailableBandwidths() {
 };
 
 module.exports = MediaSet;
-},{"./dash/segments/getSegmentListForRepresentation.js":9,"./manifest/MediaTypes.js":15,"./util/existy.js":19,"./util/findElementInArray.js":21,"./util/getMediaTypeFromMimeType.js":22}],3:[function(require,module,exports){
+},{"./dash/segments/getSegmentListForRepresentation.js":9,"./manifest/MediaTypes.js":16,"./util/existy.js":20,"./util/findElementInArray.js":22,"./util/getMediaTypeFromMimeType.js":23}],3:[function(require,module,exports){
 'use strict';
 
 var existy = require('./util/existy.js'),
@@ -458,7 +458,7 @@ MediaTypeLoader.prototype.__loadAndBufferSegment = function loadAndBufferSegment
 extendObject(MediaTypeLoader.prototype, EventDispatcherMixin);
 
 module.exports = MediaTypeLoader;
-},{"./events/EventDispatcherMixin.js":11,"./segments/loadSegment.js":17,"./util/existy.js":19,"./util/extendObject.js":20,"./util/isNumber.js":25}],4:[function(require,module,exports){
+},{"./events/EventDispatcherMixin.js":11,"./segments/loadSegment.js":18,"./util/existy.js":20,"./util/extendObject.js":21,"./util/isNumber.js":26}],4:[function(require,module,exports){
 'use strict';
 
 var existy = require('./util/existy.js'),
@@ -576,7 +576,7 @@ function PlaylistLoader(manifestController, mediaSource, tech) {
 }
 
 module.exports = PlaylistLoader;
-},{"./MediaTypeLoader.js":3,"./SourceBufferDataQueue.js":5,"./manifest/MediaTypes.js":15,"./selectSegmentList.js":18,"./util/existy.js":19}],5:[function(require,module,exports){
+},{"./MediaTypeLoader.js":3,"./SourceBufferDataQueue.js":5,"./manifest/MediaTypes.js":16,"./selectSegmentList.js":19,"./util/existy.js":20}],5:[function(require,module,exports){
 'use strict';
 
 var isFunction = require('./util/isFunction.js'),
@@ -695,7 +695,7 @@ SourceBufferDataQueue.prototype.getBufferedTimeRangeListAlignedToSegmentDuration
 extendObject(SourceBufferDataQueue.prototype, EventDispatcherMixin);
 
 module.exports = SourceBufferDataQueue;
-},{"./events/EventDispatcherMixin.js":11,"./util/existy.js":19,"./util/extendObject.js":20,"./util/isArray.js":23,"./util/isFunction.js":24,"./util/isNumber.js":25}],6:[function(require,module,exports){
+},{"./events/EventDispatcherMixin.js":11,"./util/existy.js":20,"./util/extendObject.js":21,"./util/isArray.js":24,"./util/isFunction.js":25,"./util/isNumber.js":26}],6:[function(require,module,exports){
 'use strict';
 
 var MediaSource = require('global/window').MediaSource,
@@ -737,245 +737,7 @@ function SourceHandler(source, tech) {
 
 module.exports = SourceHandler;
 
-},{"./PlaylistLoader.js":4,"./manifest/ManifestController.js":14,"global/window":1}],7:[function(require,module,exports){
-'use strict';
-
-var xmlfun = require('../../xmlfun.js'),
-    util = require('./util.js'),
-    isArray = require('../../util/isArray.js'),
-    isFunction = require('../../util/isFunction.js'),
-    isString = require('../../util/isString.js'),
-    parseRootUrl = util.parseRootUrl,
-    createMpdObject,
-    createPeriodObject,
-    createAdaptationSetObject,
-    createRepresentationObject,
-    createSegmentTemplate,
-    getMpd,
-    getAdaptationSetByType,
-    getDescendantObjectsArrayByName,
-    getAncestorObjectByName;
-
-// TODO: Should this exist on mpd dataview or at a higher level?
-// TODO: Refactor. Could be more efficient (Recursive fn? Use element.getElementsByName('BaseUrl')[0]?).
-// TODO: Currently assuming *EITHER* <BaseURL> nodes will provide an absolute base url (ie resolve to 'http://' etc)
-// TODO: *OR* we should use the base url of the host of the MPD manifest.
-var buildBaseUrl = function(xmlNode) {
-    var elemHierarchy = [xmlNode].concat(xmlfun.getAncestors(xmlNode)),
-        foundLocalBaseUrl = false;
-    var baseUrls = elemHierarchy.map(function(elem) {
-        if (foundLocalBaseUrl) { return ''; }
-        if (!elem.hasChildNodes()) { return ''; }
-        var child;
-        for (var i=0; i<elem.childNodes.length; i++) {
-            child = elem.childNodes.item(i);
-            if (child.nodeName === 'BaseURL') {
-                var textElem = child.childNodes.item(0);
-                var textValue = textElem.wholeText.trim();
-                if (textValue.indexOf('http://') === 0) { foundLocalBaseUrl = true; }
-                return textElem.wholeText.trim();
-            }
-        }
-
-        return '';
-    });
-
-    var baseUrl = baseUrls.reverse().join('');
-    if (!baseUrl) { return parseRootUrl(xmlNode.baseURI); }
-    return baseUrl;
-};
-
-var elemsWithCommonProperties = [
-    'AdaptationSet',
-    'Representation',
-    'SubRepresentation'
-];
-
-var hasCommonProperties = function(elem) {
-    return elemsWithCommonProperties.indexOf(elem.nodeName) >= 0;
-};
-
-var doesntHaveCommonProperties = function(elem) {
-    return !hasCommonProperties(elem);
-};
-
-// Common Attrs
-var getWidth = xmlfun.getInheritableAttribute('width'),
-    getHeight = xmlfun.getInheritableAttribute('height'),
-    getFrameRate = xmlfun.getInheritableAttribute('frameRate'),
-    getMimeType = xmlfun.getInheritableAttribute('mimeType'),
-    getCodecs = xmlfun.getInheritableAttribute('codecs');
-
-var getSegmentTemplateXmlList = xmlfun.getMultiLevelElementList('SegmentTemplate');
-
-// MPD Attr fns
-var getMediaPresentationDuration = xmlfun.getAttrFn('mediaPresentationDuration'),
-    getType = xmlfun.getAttrFn('type'),
-    getMinimumUpdatePeriod = xmlfun.getAttrFn('minimumUpdatePeriod'),
-    getAvailabilityStartTime = xmlfun.getAttrFn('availabilityStartTime'),
-    getSuggestedPresentationDelay = xmlfun.getAttrFn('suggestedPresentationDelay'),
-    getTimeShiftBufferDepth = xmlfun.getAttrFn('timeShiftBufferDepth');
-
-// Representation Attr fns
-var getId = xmlfun.getAttrFn('id'),
-    getBandwidth = xmlfun.getAttrFn('bandwidth');
-
-// SegmentTemplate Attr fns
-var getInitialization = xmlfun.getAttrFn('initialization'),
-    getMedia = xmlfun.getAttrFn('media'),
-    getDuration = xmlfun.getAttrFn('duration'),
-    getTimescale = xmlfun.getAttrFn('timescale'),
-    getPresentationTimeOffset = xmlfun.getAttrFn('presentationTimeOffset'),
-    getStartNumber = xmlfun.getAttrFn('startNumber');
-
-// TODO: Repeat code. Abstract away (Prototypal Inheritance/OO Model? Object composer fn?)
-createMpdObject = function(xmlNode) {
-    return {
-        xml: xmlNode,
-        // Descendants, Ancestors, & Siblings
-        getPeriods: xmlfun.preApplyArgsFn(getDescendantObjectsArrayByName, xmlNode, 'Period', createPeriodObject),
-        getMediaPresentationDuration: xmlfun.preApplyArgsFn(getMediaPresentationDuration, xmlNode),
-        getType: xmlfun.preApplyArgsFn(getType, xmlNode),
-        getMinimumUpdatePeriod: xmlfun.preApplyArgsFn(getMinimumUpdatePeriod, xmlNode),
-        getAvailabilityStartTime: xmlfun.preApplyArgsFn(getAvailabilityStartTime, xmlNode),
-        getSuggestedPresentationDelay: xmlfun.preApplyArgsFn(getSuggestedPresentationDelay, xmlNode),
-        getTimeShiftBufferDepth: xmlfun.preApplyArgsFn(getTimeShiftBufferDepth, xmlNode)
-    };
-};
-
-createPeriodObject = function(xmlNode) {
-    return {
-        xml: xmlNode,
-        // Descendants, Ancestors, & Siblings
-        getAdaptationSets: xmlfun.preApplyArgsFn(getDescendantObjectsArrayByName, xmlNode, 'AdaptationSet', createAdaptationSetObject),
-        getAdaptationSetByType: function(type) {
-            return getAdaptationSetByType(type, xmlNode);
-        },
-        getMpd: xmlfun.preApplyArgsFn(getAncestorObjectByName, xmlNode, 'MPD', createMpdObject)
-    };
-};
-
-createAdaptationSetObject = function(xmlNode) {
-    return {
-        xml: xmlNode,
-        // Descendants, Ancestors, & Siblings
-        getRepresentations: xmlfun.preApplyArgsFn(getDescendantObjectsArrayByName, xmlNode, 'Representation', createRepresentationObject),
-        getSegmentTemplate: function() {
-            return createSegmentTemplate(getSegmentTemplateXmlList(xmlNode));
-        },
-        getPeriod: xmlfun.preApplyArgsFn(getAncestorObjectByName, xmlNode, 'Period', createPeriodObject),
-        getMpd: xmlfun.preApplyArgsFn(getAncestorObjectByName, xmlNode, 'MPD', createMpdObject),
-        // Attrs
-        getMimeType: xmlfun.preApplyArgsFn(getMimeType, xmlNode)
-    };
-};
-
-createRepresentationObject = function(xmlNode) {
-    return {
-        xml: xmlNode,
-        // Descendants, Ancestors, & Siblings
-        getSegmentTemplate: function() {
-            return createSegmentTemplate(getSegmentTemplateXmlList(xmlNode));
-        },
-        getAdaptationSet: xmlfun.preApplyArgsFn(getAncestorObjectByName, xmlNode, 'AdaptationSet', createAdaptationSetObject),
-        getPeriod: xmlfun.preApplyArgsFn(getAncestorObjectByName, xmlNode, 'Period', createPeriodObject),
-        getMpd: xmlfun.preApplyArgsFn(getAncestorObjectByName, xmlNode, 'MPD', createMpdObject),
-        // Attrs
-        getId: xmlfun.preApplyArgsFn(getId, xmlNode),
-        getWidth: xmlfun.preApplyArgsFn(getWidth, xmlNode),
-        getHeight: xmlfun.preApplyArgsFn(getHeight, xmlNode),
-        getFrameRate: xmlfun.preApplyArgsFn(getFrameRate, xmlNode),
-        getBandwidth: xmlfun.preApplyArgsFn(getBandwidth, xmlNode),
-        getCodecs: xmlfun.preApplyArgsFn(getCodecs, xmlNode),
-        getBaseUrl: xmlfun.preApplyArgsFn(buildBaseUrl, xmlNode),
-        getMimeType: xmlfun.preApplyArgsFn(getMimeType, xmlNode)
-    };
-};
-
-createSegmentTemplate = function(xmlArray) {
-    // Effectively a find function + a map function.
-    function getAttrFromXmlArray(attrGetterFn, xmlArray) {
-        if (!isArray(xmlArray)) { return undefined; }
-        if (!isFunction(attrGetterFn)) { return undefined; }
-
-        var i,
-            length = xmlArray.length,
-            currentAttrValue;
-
-        for (i=0; i<xmlArray.length; i++) {
-            currentAttrValue = attrGetterFn(xmlArray[i]);
-            if (isString(currentAttrValue) && currentAttrValue !== '') { return currentAttrValue; }
-        }
-
-        return undefined;
-    }
-
-    return {
-        xml: xmlArray,
-        // Descendants, Ancestors, & Siblings
-        getAdaptationSet: xmlfun.preApplyArgsFn(getAncestorObjectByName, xmlArray[0], 'AdaptationSet', createAdaptationSetObject),
-        getPeriod: xmlfun.preApplyArgsFn(getAncestorObjectByName, xmlArray[0], 'Period', createPeriodObject),
-        getMpd: xmlfun.preApplyArgsFn(getAncestorObjectByName, xmlArray[0], 'MPD', createMpdObject),
-        // Attrs
-        getInitialization: xmlfun.preApplyArgsFn(getAttrFromXmlArray, getInitialization, xmlArray),
-        getMedia: xmlfun.preApplyArgsFn(getAttrFromXmlArray, getMedia, xmlArray),
-        getDuration: xmlfun.preApplyArgsFn(getAttrFromXmlArray, getDuration, xmlArray),
-        getTimescale: xmlfun.preApplyArgsFn(getAttrFromXmlArray, getTimescale, xmlArray),
-        getPresentationTimeOffset: xmlfun.preApplyArgsFn(getAttrFromXmlArray, getPresentationTimeOffset, xmlArray),
-        getStartNumber: xmlfun.preApplyArgsFn(getAttrFromXmlArray, getStartNumber, xmlArray)
-    };
-};
-
-// TODO: Change this api to return a list of all matching adaptation sets to allow for greater flexibility.
-getAdaptationSetByType = function(type, periodXml) {
-    var adaptationSets = periodXml.getElementsByTagName('AdaptationSet'),
-        adaptationSet,
-        representation,
-        mimeType;
-
-    for (var i=0; i<adaptationSets.length; i++) {
-        adaptationSet = adaptationSets.item(i);
-        // Since the mimeType can be defined on the AdaptationSet or on its Representation child nodes,
-        // check for mimetype on one of its Representation children using getMimeType(), which assumes the
-        // mimeType can be inherited and will check itself and its ancestors for the attr.
-        representation = adaptationSet.getElementsByTagName('Representation')[0];
-        // Need to check the representation instead of the adaptation set, since the mimeType may not be specified
-        // on the adaptation set at all and may be specified for each of the representations instead.
-        mimeType = getMimeType(representation);
-        if (!!mimeType && mimeType.indexOf(type) >= 0) { return createAdaptationSetObject(adaptationSet); }
-    }
-
-    return null;
-};
-
-getMpd = function(manifestXml) {
-    return getDescendantObjectsArrayByName(manifestXml, 'MPD', createMpdObject)[0];
-};
-
-// TODO: Move to xmlfun or own module.
-getDescendantObjectsArrayByName = function(parentXml, tagName, mapFn) {
-    var descendantsXmlArray = Array.prototype.slice.call(parentXml.getElementsByTagName(tagName));
-    /*if (typeof mapFn === 'function') { return descendantsXmlArray.map(mapFn); }*/
-    if (typeof mapFn === 'function') {
-        var mappedElem = descendantsXmlArray.map(mapFn);
-        return  mappedElem;
-    }
-    return descendantsXmlArray;
-};
-
-// TODO: Move to xmlfun or own module.
-getAncestorObjectByName = function getAncestorObjectByName(xmlNode, tagName, mapFn) {
-    if (!tagName || !xmlNode || !xmlNode.parentNode) { return null; }
-    if (!xmlNode.parentNode.nodeName) { return null; }
-
-    if (xmlNode.parentNode.nodeName === tagName) {
-        return isFunction(mapFn) ? mapFn(xmlNode.parentNode) : xmlNode.parentNode;
-    }
-    return getAncestorObjectByName(xmlNode.parentNode, tagName, mapFn);
-};
-
-module.exports = getMpd;
-},{"../../util/isArray.js":23,"../../util/isFunction.js":24,"../../util/isString.js":26,"../../xmlfun.js":28,"./util.js":8}],8:[function(require,module,exports){
+},{"./PlaylistLoader.js":4,"./manifest/ManifestController.js":15,"global/window":1}],7:[function(require,module,exports){
 'use strict';
 
 var parseRootUrl,
@@ -1054,21 +816,265 @@ parseDateTime = function(str) {
     return utcDate;
 };
 
-var util = {
+var dashUtil = {
     parseRootUrl: parseRootUrl,
     parseMediaPresentationDuration: parseMediaPresentationDuration,
     parseDateTime: parseDateTime
 };
 
-module.exports = util;
-},{}],9:[function(require,module,exports){
+module.exports = function getDashUtil() { return dashUtil; };
+},{}],8:[function(require,module,exports){
+'use strict';
+
+var getXmlFun = require('../../getXmlFun.js'),
+    xmlFun = getXmlFun(),
+    getDashUtil = require('./getDashUtil.js'),
+    dashUtil = getDashUtil(),
+    isArray = require('../../util/isArray.js'),
+    isFunction = require('../../util/isFunction.js'),
+    isString = require('../../util/isString.js'),
+    parseRootUrl = dashUtil.parseRootUrl,
+    createMpdObject,
+    createPeriodObject,
+    createAdaptationSetObject,
+    createRepresentationObject,
+    createSegmentTemplate,
+    getMpd,
+    getAdaptationSetByType,
+    getDescendantObjectsArrayByName,
+    getAncestorObjectByName;
+
+// TODO: Should this exist on mpd dataview or at a higher level?
+// TODO: Refactor. Could be more efficient (Recursive fn? Use element.getElementsByName('BaseUrl')[0]?).
+// TODO: Currently assuming *EITHER* <BaseURL> nodes will provide an absolute base url (ie resolve to 'http://' etc)
+// TODO: *OR* we should use the base url of the host of the MPD manifest.
+var buildBaseUrl = function(xmlNode) {
+    var elemHierarchy = [xmlNode].concat(xmlFun.getAncestors(xmlNode)),
+        foundLocalBaseUrl = false;
+    var baseUrls = elemHierarchy.map(function(elem) {
+        if (foundLocalBaseUrl) { return ''; }
+        if (!elem.hasChildNodes()) { return ''; }
+        var child;
+        for (var i=0; i<elem.childNodes.length; i++) {
+            child = elem.childNodes.item(i);
+            if (child.nodeName === 'BaseURL') {
+                var textElem = child.childNodes.item(0);
+                var textValue = textElem.wholeText.trim();
+                if (textValue.indexOf('http://') === 0) { foundLocalBaseUrl = true; }
+                return textElem.wholeText.trim();
+            }
+        }
+
+        return '';
+    });
+
+    var baseUrl = baseUrls.reverse().join('');
+    if (!baseUrl) { return parseRootUrl(xmlNode.baseURI); }
+    return baseUrl;
+};
+
+var elemsWithCommonProperties = [
+    'AdaptationSet',
+    'Representation',
+    'SubRepresentation'
+];
+
+var hasCommonProperties = function(elem) {
+    return elemsWithCommonProperties.indexOf(elem.nodeName) >= 0;
+};
+
+var doesntHaveCommonProperties = function(elem) {
+    return !hasCommonProperties(elem);
+};
+
+// Common Attrs
+var getWidth = xmlFun.getInheritableAttribute('width'),
+    getHeight = xmlFun.getInheritableAttribute('height'),
+    getFrameRate = xmlFun.getInheritableAttribute('frameRate'),
+    getMimeType = xmlFun.getInheritableAttribute('mimeType'),
+    getCodecs = xmlFun.getInheritableAttribute('codecs');
+
+var getSegmentTemplateXmlList = xmlFun.getMultiLevelElementList('SegmentTemplate');
+
+// MPD Attr fns
+var getMediaPresentationDuration = xmlFun.getAttrFn('mediaPresentationDuration'),
+    getType = xmlFun.getAttrFn('type'),
+    getMinimumUpdatePeriod = xmlFun.getAttrFn('minimumUpdatePeriod'),
+    getAvailabilityStartTime = xmlFun.getAttrFn('availabilityStartTime'),
+    getSuggestedPresentationDelay = xmlFun.getAttrFn('suggestedPresentationDelay'),
+    getTimeShiftBufferDepth = xmlFun.getAttrFn('timeShiftBufferDepth');
+
+// Representation Attr fns
+var getId = xmlFun.getAttrFn('id'),
+    getBandwidth = xmlFun.getAttrFn('bandwidth');
+
+// SegmentTemplate Attr fns
+var getInitialization = xmlFun.getAttrFn('initialization'),
+    getMedia = xmlFun.getAttrFn('media'),
+    getDuration = xmlFun.getAttrFn('duration'),
+    getTimescale = xmlFun.getAttrFn('timescale'),
+    getPresentationTimeOffset = xmlFun.getAttrFn('presentationTimeOffset'),
+    getStartNumber = xmlFun.getAttrFn('startNumber');
+
+// TODO: Repeat code. Abstract away (Prototypal Inheritance/OO Model? Object composer fn?)
+createMpdObject = function(xmlNode) {
+    return {
+        xml: xmlNode,
+        // Descendants, Ancestors, & Siblings
+        getPeriods: xmlFun.preApplyArgsFn(getDescendantObjectsArrayByName, xmlNode, 'Period', createPeriodObject),
+        getMediaPresentationDuration: xmlFun.preApplyArgsFn(getMediaPresentationDuration, xmlNode),
+        getType: xmlFun.preApplyArgsFn(getType, xmlNode),
+        getMinimumUpdatePeriod: xmlFun.preApplyArgsFn(getMinimumUpdatePeriod, xmlNode),
+        getAvailabilityStartTime: xmlFun.preApplyArgsFn(getAvailabilityStartTime, xmlNode),
+        getSuggestedPresentationDelay: xmlFun.preApplyArgsFn(getSuggestedPresentationDelay, xmlNode),
+        getTimeShiftBufferDepth: xmlFun.preApplyArgsFn(getTimeShiftBufferDepth, xmlNode)
+    };
+};
+
+createPeriodObject = function(xmlNode) {
+    return {
+        xml: xmlNode,
+        // Descendants, Ancestors, & Siblings
+        getAdaptationSets: xmlFun.preApplyArgsFn(getDescendantObjectsArrayByName, xmlNode, 'AdaptationSet', createAdaptationSetObject),
+        getAdaptationSetByType: function(type) {
+            return getAdaptationSetByType(type, xmlNode);
+        },
+        getMpd: xmlFun.preApplyArgsFn(getAncestorObjectByName, xmlNode, 'MPD', createMpdObject)
+    };
+};
+
+createAdaptationSetObject = function(xmlNode) {
+    return {
+        xml: xmlNode,
+        // Descendants, Ancestors, & Siblings
+        getRepresentations: xmlFun.preApplyArgsFn(getDescendantObjectsArrayByName, xmlNode, 'Representation', createRepresentationObject),
+        getSegmentTemplate: function() {
+            return createSegmentTemplate(getSegmentTemplateXmlList(xmlNode));
+        },
+        getPeriod: xmlFun.preApplyArgsFn(getAncestorObjectByName, xmlNode, 'Period', createPeriodObject),
+        getMpd: xmlFun.preApplyArgsFn(getAncestorObjectByName, xmlNode, 'MPD', createMpdObject),
+        // Attrs
+        getMimeType: xmlFun.preApplyArgsFn(getMimeType, xmlNode)
+    };
+};
+
+createRepresentationObject = function(xmlNode) {
+    return {
+        xml: xmlNode,
+        // Descendants, Ancestors, & Siblings
+        getSegmentTemplate: function() {
+            return createSegmentTemplate(getSegmentTemplateXmlList(xmlNode));
+        },
+        getAdaptationSet: xmlFun.preApplyArgsFn(getAncestorObjectByName, xmlNode, 'AdaptationSet', createAdaptationSetObject),
+        getPeriod: xmlFun.preApplyArgsFn(getAncestorObjectByName, xmlNode, 'Period', createPeriodObject),
+        getMpd: xmlFun.preApplyArgsFn(getAncestorObjectByName, xmlNode, 'MPD', createMpdObject),
+        // Attrs
+        getId: xmlFun.preApplyArgsFn(getId, xmlNode),
+        getWidth: xmlFun.preApplyArgsFn(getWidth, xmlNode),
+        getHeight: xmlFun.preApplyArgsFn(getHeight, xmlNode),
+        getFrameRate: xmlFun.preApplyArgsFn(getFrameRate, xmlNode),
+        getBandwidth: xmlFun.preApplyArgsFn(getBandwidth, xmlNode),
+        getCodecs: xmlFun.preApplyArgsFn(getCodecs, xmlNode),
+        getBaseUrl: xmlFun.preApplyArgsFn(buildBaseUrl, xmlNode),
+        getMimeType: xmlFun.preApplyArgsFn(getMimeType, xmlNode)
+    };
+};
+
+createSegmentTemplate = function(xmlArray) {
+    // Effectively a find function + a map function.
+    function getAttrFromXmlArray(attrGetterFn, xmlArray) {
+        if (!isArray(xmlArray)) { return undefined; }
+        if (!isFunction(attrGetterFn)) { return undefined; }
+
+        var i,
+            length = xmlArray.length,
+            currentAttrValue;
+
+        for (i=0; i<xmlArray.length; i++) {
+            currentAttrValue = attrGetterFn(xmlArray[i]);
+            if (isString(currentAttrValue) && currentAttrValue !== '') { return currentAttrValue; }
+        }
+
+        return undefined;
+    }
+
+    return {
+        xml: xmlArray,
+        // Descendants, Ancestors, & Siblings
+        getAdaptationSet: xmlFun.preApplyArgsFn(getAncestorObjectByName, xmlArray[0], 'AdaptationSet', createAdaptationSetObject),
+        getPeriod: xmlFun.preApplyArgsFn(getAncestorObjectByName, xmlArray[0], 'Period', createPeriodObject),
+        getMpd: xmlFun.preApplyArgsFn(getAncestorObjectByName, xmlArray[0], 'MPD', createMpdObject),
+        // Attrs
+        getInitialization: xmlFun.preApplyArgsFn(getAttrFromXmlArray, getInitialization, xmlArray),
+        getMedia: xmlFun.preApplyArgsFn(getAttrFromXmlArray, getMedia, xmlArray),
+        getDuration: xmlFun.preApplyArgsFn(getAttrFromXmlArray, getDuration, xmlArray),
+        getTimescale: xmlFun.preApplyArgsFn(getAttrFromXmlArray, getTimescale, xmlArray),
+        getPresentationTimeOffset: xmlFun.preApplyArgsFn(getAttrFromXmlArray, getPresentationTimeOffset, xmlArray),
+        getStartNumber: xmlFun.preApplyArgsFn(getAttrFromXmlArray, getStartNumber, xmlArray)
+    };
+};
+
+// TODO: Change this api to return a list of all matching adaptation sets to allow for greater flexibility.
+getAdaptationSetByType = function(type, periodXml) {
+    var adaptationSets = periodXml.getElementsByTagName('AdaptationSet'),
+        adaptationSet,
+        representation,
+        mimeType;
+
+    for (var i=0; i<adaptationSets.length; i++) {
+        adaptationSet = adaptationSets.item(i);
+        // Since the mimeType can be defined on the AdaptationSet or on its Representation child nodes,
+        // check for mimetype on one of its Representation children using getMimeType(), which assumes the
+        // mimeType can be inherited and will check itself and its ancestors for the attr.
+        representation = adaptationSet.getElementsByTagName('Representation')[0];
+        // Need to check the representation instead of the adaptation set, since the mimeType may not be specified
+        // on the adaptation set at all and may be specified for each of the representations instead.
+        mimeType = getMimeType(representation);
+        if (!!mimeType && mimeType.indexOf(type) >= 0) { return createAdaptationSetObject(adaptationSet); }
+    }
+
+    return null;
+};
+
+getMpd = function(manifestXml) {
+    return getDescendantObjectsArrayByName(manifestXml, 'MPD', createMpdObject)[0];
+};
+
+// TODO: Move to xmlFun or own module.
+getDescendantObjectsArrayByName = function(parentXml, tagName, mapFn) {
+    var descendantsXmlArray = Array.prototype.slice.call(parentXml.getElementsByTagName(tagName));
+    /*if (typeof mapFn === 'function') { return descendantsXmlArray.map(mapFn); }*/
+    if (typeof mapFn === 'function') {
+        var mappedElem = descendantsXmlArray.map(mapFn);
+        return  mappedElem;
+    }
+    return descendantsXmlArray;
+};
+
+// TODO: Move to xmlFun or own module.
+getAncestorObjectByName = function getAncestorObjectByName(xmlNode, tagName, mapFn) {
+    if (!tagName || !xmlNode || !xmlNode.parentNode) { return null; }
+    if (!xmlNode.parentNode.nodeName) { return null; }
+
+    if (xmlNode.parentNode.nodeName === tagName) {
+        return isFunction(mapFn) ? mapFn(xmlNode.parentNode) : xmlNode.parentNode;
+    }
+    return getAncestorObjectByName(xmlNode.parentNode, tagName, mapFn);
+};
+
+module.exports = getMpd;
+},{"../../getXmlFun.js":13,"../../util/isArray.js":24,"../../util/isFunction.js":25,"../../util/isString.js":27,"./getDashUtil.js":7}],9:[function(require,module,exports){
 'use strict';
 
 var existy = require('../../util/existy.js'),
-    xmlfun = require('../../xmlfun.js'),
-    parseMediaPresentationDuration = require('../mpd/util.js').parseMediaPresentationDuration,
-    parseDateTime = require('../mpd/util.js').parseDateTime,
-    segmentTemplate = require('./segmentTemplate'),
+    getXmlFun = require('../../getXmlFun.js'),
+    xmlFun = getXmlFun(),
+    getDashUtil = require('../mpd/getDashUtil.js'),
+    dashUtil = getDashUtil(),
+    parseMediaPresentationDuration = dashUtil.parseMediaPresentationDuration,
+    parseDateTime = dashUtil.parseDateTime,
+    getSegmentTemplate = require('./getSegmentTemplate'),
+    segmentTemplate = getSegmentTemplate(),
     createSegmentListFromTemplate,
     createSegmentFromTemplateByNumber,
     createSegmentFromTemplateByTime,
@@ -1167,37 +1173,37 @@ getEndNumberFromTemplate = function(representation) {
     return getTotalSegmentCountFromTemplate(representation) + getStartNumberFromTemplate(representation) - 1;
 };
 
-createSegmentListFromTemplate = function(representation) {
+createSegmentListFromTemplate = function(representationXml) {
     return {
-        getType: xmlfun.preApplyArgsFn(getType, representation),
-        getIsLive: xmlfun.preApplyArgsFn(getIsLive, representation),
-        getBandwidth: xmlfun.preApplyArgsFn(getBandwidth, representation),
-        getHeight: xmlfun.preApplyArgsFn(getHeight, representation),
-        getWidth: xmlfun.preApplyArgsFn(getWidth, representation),
-        getTotalDuration: xmlfun.preApplyArgsFn(getTotalDurationFromTemplate, representation),
-        getSegmentDuration: xmlfun.preApplyArgsFn(getSegmentDurationFromTemplate, representation),
-        getUTCWallClockStartTime: xmlfun.preApplyArgsFn(getUTCWallClockStartTimeFromTemplate, representation),
-        getTimeShiftBufferDepth: xmlfun.preApplyArgsFn(getTimeShiftBufferDepth, representation),
-        getTotalSegmentCount: xmlfun.preApplyArgsFn(getTotalSegmentCountFromTemplate, representation),
-        getStartNumber: xmlfun.preApplyArgsFn(getStartNumberFromTemplate, representation),
-        getEndNumber: xmlfun.preApplyArgsFn(getEndNumberFromTemplate, representation),
+        getType: xmlFun.preApplyArgsFn(getType, representationXml),
+        getIsLive: xmlFun.preApplyArgsFn(getIsLive, representationXml),
+        getBandwidth: xmlFun.preApplyArgsFn(getBandwidth, representationXml),
+        getHeight: xmlFun.preApplyArgsFn(getHeight, representationXml),
+        getWidth: xmlFun.preApplyArgsFn(getWidth, representationXml),
+        getTotalDuration: xmlFun.preApplyArgsFn(getTotalDurationFromTemplate, representationXml),
+        getSegmentDuration: xmlFun.preApplyArgsFn(getSegmentDurationFromTemplate, representationXml),
+        getUTCWallClockStartTime: xmlFun.preApplyArgsFn(getUTCWallClockStartTimeFromTemplate, representationXml),
+        getTimeShiftBufferDepth: xmlFun.preApplyArgsFn(getTimeShiftBufferDepth, representationXml),
+        getTotalSegmentCount: xmlFun.preApplyArgsFn(getTotalSegmentCountFromTemplate, representationXml),
+        getStartNumber: xmlFun.preApplyArgsFn(getStartNumberFromTemplate, representationXml),
+        getEndNumber: xmlFun.preApplyArgsFn(getEndNumberFromTemplate, representationXml),
         // TODO: Externalize
         getInitialization: function() {
             var initialization = {};
             initialization.getUrl = function() {
-                var baseUrl = representation.getBaseUrl(),
-                    representationId = representation.getId(),
-                    initializationRelativeUrlTemplate = representation.getSegmentTemplate().getInitialization(),
+                var baseUrl = representationXml.getBaseUrl(),
+                    representationId = representationXml.getId(),
+                    initializationRelativeUrlTemplate = representationXml.getSegmentTemplate().getInitialization(),
                     initializationRelativeUrl = segmentTemplate.replaceIDForTemplate(initializationRelativeUrlTemplate, representationId);
 
-                initializationRelativeUrl = segmentTemplate.replaceTokenForTemplate(initializationRelativeUrl, 'Bandwidth', representation.getBandwidth());
+                initializationRelativeUrl = segmentTemplate.replaceTokenForTemplate(initializationRelativeUrl, 'Bandwidth', representationXml.getBandwidth());
                 return baseUrl + initializationRelativeUrl;
             };
             return initialization;
         },
-        getSegmentByNumber: function(number) { return createSegmentFromTemplateByNumber(representation, number); },
-        getSegmentByTime: function(seconds) { return createSegmentFromTemplateByTime(representation, seconds); },
-        getSegmentByUTCWallClockTime: function(utcMilliseconds) { return createSegmentFromTemplateByUTCWallClockTime(representation, utcMilliseconds); }
+        getSegmentByNumber: function(number) { return createSegmentFromTemplateByNumber(representationXml, number); },
+        getSegmentByTime: function(seconds) { return createSegmentFromTemplateByTime(representationXml, seconds); },
+        getSegmentByUTCWallClockTime: function(utcMilliseconds) { return createSegmentFromTemplateByUTCWallClockTime(representationXml, utcMilliseconds); }
     };
 };
 
@@ -1277,7 +1283,7 @@ function getSegmentListForRepresentation(representation) {
 
 module.exports = getSegmentListForRepresentation;
 
-},{"../../util/existy.js":19,"../../xmlfun.js":28,"../mpd/util.js":8,"./segmentTemplate":10}],10:[function(require,module,exports){
+},{"../../getXmlFun.js":13,"../../util/existy.js":20,"../mpd/getDashUtil.js":7,"./getSegmentTemplate":10}],10:[function(require,module,exports){
 'use strict';
 
 var segmentTemplate,
@@ -1381,7 +1387,7 @@ segmentTemplate = {
     replaceIDForTemplate: replaceIDForTemplate
 };
 
-module.exports = segmentTemplate;
+module.exports = function getSegmentTemplate() { return segmentTemplate; };
 },{}],11:[function(require,module,exports){
 'use strict';
 
@@ -1408,6 +1414,152 @@ var videojs = require('global/window').videojs,
 module.exports = eventManager;
 
 },{"global/window":1}],13:[function(require,module,exports){
+'use strict';
+
+// TODO: Refactor to separate js files & modules & remove from here.
+
+var existy = require('./util/existy.js'),
+    isFunction = require('./util/isFunction.js'),
+    isString = require('./util/isString.js');
+
+// NOTE: This version of truthy allows more values to count
+// as "true" than standard JS Boolean operator comparisons.
+// Specifically, truthy() will return true for the values
+// 0, "", and NaN, whereas JS would treat these as "falsy" values.
+function truthy(x) { return (x !== false) && existy(x); }
+
+function preApplyArgsFn(fun /*, args */) {
+    var preAppliedArgs = Array.prototype.slice.call(arguments, 1);
+    // NOTE: the *this* reference will refer to the closure's context unless
+    // the returned function is itself called via .call() or .apply(). If you
+    // *need* to refer to instance-level properties, do something like the following:
+    //
+    // MyType.prototype.someFn = function(argC) { preApplyArgsFn(someOtherFn, argA, argB, ... argN).call(this); };
+    //
+    // Otherwise, you should be able to just call:
+    //
+    // MyType.prototype.someFn = preApplyArgsFn(someOtherFn, argA, argB, ... argN);
+    //
+    // Where possible, functions and methods should not be reaching out to global scope anyway, so...
+    return function() { return fun.apply(this, preAppliedArgs); };
+}
+
+// Higher-order XML functions
+
+// Takes function(s) as arguments
+var getAncestors = function(elem, shouldStopPred) {
+    var ancestors = [];
+    if (!isFunction(shouldStopPred)) { shouldStopPred = function() { return false; }; }
+    (function getAncestorsRecurse(elem) {
+        if (shouldStopPred(elem, ancestors)) { return; }
+        if (existy(elem) && existy(elem.parentNode)) {
+            ancestors.push(elem.parentNode);
+            getAncestorsRecurse(elem.parentNode);
+        }
+        return;
+    })(elem);
+    return ancestors;
+};
+
+// Returns function
+var getNodeListByName = function(name) {
+    return function(xmlObj) {
+        return xmlObj.getElementsByTagName(name);
+    };
+};
+
+// Returns function
+var hasMatchingAttribute = function(attrName, value) {
+    if ((typeof attrName !== 'string') || attrName === '') { return undefined; }
+    return function(elem) {
+        if (!existy(elem) || !existy(elem.hasAttribute) || !existy(elem.getAttribute)) { return false; }
+        if (!existy(value)) { return elem.hasAttribute(attrName); }
+        return (elem.getAttribute(attrName) === value);
+    };
+};
+
+// Returns function
+var getAttrFn = function(attrName) {
+    if (!isString(attrName)) { return undefined; }
+    return function(elem) {
+        if (!existy(elem) || !isFunction(elem.getAttribute)) { return undefined; }
+        return elem.getAttribute(attrName);
+    };
+};
+
+// Returns function
+// TODO: Add shouldStopPred (should function similarly to shouldStopPred in getInheritableElement, below)
+var getInheritableAttribute = function(attrName) {
+    if ((!isString(attrName)) || attrName === '') { return undefined; }
+    return function recurseCheckAncestorAttr(elem) {
+        if (!existy(elem) || !existy(elem.hasAttribute) || !existy(elem.getAttribute)) { return undefined; }
+        if (elem.hasAttribute(attrName)) { return elem.getAttribute(attrName); }
+        if (!existy(elem.parentNode)) { return undefined; }
+        return recurseCheckAncestorAttr(elem.parentNode);
+    };
+};
+
+// Takes function(s) as arguments; Returns function
+var getInheritableElement = function(nodeName, shouldStopPred) {
+    if ((!isString(nodeName)) || nodeName === '') { return undefined; }
+    if (!isFunction(shouldStopPred)) { shouldStopPred = function() { return false; }; }
+    return function getInheritableElementRecurse(elem) {
+        if (!existy(elem) || !existy(elem.getElementsByTagName)) { return undefined; }
+        if (shouldStopPred(elem)) { return undefined; }
+        var matchingElemList = elem.getElementsByTagName(nodeName);
+        if (existy(matchingElemList) && matchingElemList.length > 0) { return matchingElemList[0]; }
+        if (!existy(elem.parentNode)) { return undefined; }
+        return getInheritableElementRecurse(elem.parentNode);
+    };
+};
+
+var getChildElementByNodeName = function(nodeName) {
+    if ((!isString(nodeName)) || nodeName === '') { return undefined; }
+    return function(elem) {
+        if (!existy(elem) || !isFunction(elem.getElementsByTagName)) { return undefined; }
+        var initialMatches = elem.getElementsByTagName(nodeName),
+            currentElem;
+        if (!existy(initialMatches) || initialMatches.length <= 0) { return undefined; }
+        currentElem = initialMatches[0];
+        return (currentElem.parentNode === elem) ? currentElem : undefined;
+    };
+};
+
+var getMultiLevelElementList = function(nodeName, shouldStopPred) {
+    if ((!isString(nodeName)) || nodeName === '') { return undefined; }
+    if (!isFunction(shouldStopPred)) { shouldStopPred = function() { return false; }; }
+    var getMatchingChildNodeFn = getChildElementByNodeName(nodeName);
+    return function(elem) {
+        var currentElem = elem,
+            multiLevelElemList = [],
+            matchingElem;
+        // TODO: Replace w/recursive fn?
+        while (existy(currentElem) && !shouldStopPred(currentElem)) {
+            matchingElem = getMatchingChildNodeFn(currentElem);
+            if (existy(matchingElem)) { multiLevelElemList.push(matchingElem); }
+            currentElem = currentElem.parentNode;
+        }
+
+        return multiLevelElemList.length > 0 ? multiLevelElemList : undefined;
+    };
+};
+
+// Publish External API:
+var xmlFun = {};
+xmlFun.existy = existy;
+xmlFun.truthy = truthy;
+
+xmlFun.getNodeListByName = getNodeListByName;
+xmlFun.hasMatchingAttribute = hasMatchingAttribute;
+xmlFun.getInheritableAttribute = getInheritableAttribute;
+xmlFun.getAncestors = getAncestors;
+xmlFun.getAttrFn = getAttrFn;
+xmlFun.preApplyArgsFn = preApplyArgsFn;
+xmlFun.getInheritableElement = getInheritableElement;
+xmlFun.getMultiLevelElementList = getMultiLevelElementList;
+
+module.exports = function getXmlFun() { return xmlFun; };
+},{"./util/existy.js":20,"./util/isFunction.js":25,"./util/isString.js":27}],14:[function(require,module,exports){
 /**
  *
  * main source for packaged code. Auto-bootstraps the source handling functionality by registering the source handler
@@ -1480,7 +1632,7 @@ module.exports = eventManager;
 
 }.call(this));
 
-},{"./SourceHandler":6,"global/window":1}],14:[function(require,module,exports){
+},{"./SourceHandler":6,"global/window":1}],15:[function(require,module,exports){
 'use strict';
 
 var existy = require('../util/existy.js'),
@@ -1492,7 +1644,9 @@ var existy = require('../util/existy.js'),
     getMediaTypeFromMimeType = require('../util/getMediaTypeFromMimeType.js'),
     loadManifest = require('./loadManifest.js'),
     extendObject = require('../util/extendObject.js'),
-    parseMediaPresentationDuration = require('../dash/mpd/util.js').parseMediaPresentationDuration,
+    getDashUtil = require('../dash/mpd/getDashUtil.js'),
+    dashUtil = getDashUtil(),
+    parseMediaPresentationDuration = dashUtil.parseMediaPresentationDuration,
     EventDispatcherMixin = require('../events/EventDispatcherMixin.js'),
     getMpd = require('../dash/mpd/getMpd.js'),
     MediaSet = require('../MediaSet.js'),
@@ -1649,12 +1803,14 @@ ManifestController.prototype.getMediaSets = function getMediaSets() {
 extendObject(ManifestController.prototype, EventDispatcherMixin);
 
 module.exports = ManifestController;
-},{"../MediaSet.js":2,"../dash/mpd/getMpd.js":7,"../dash/mpd/util.js":8,"../events/EventDispatcherMixin.js":11,"../util/existy.js":19,"../util/extendObject.js":20,"../util/findElementInArray.js":21,"../util/getMediaTypeFromMimeType.js":22,"../util/isArray.js":23,"../util/isFunction.js":24,"../util/isString.js":26,"../util/truthy.js":27,"./MediaTypes.js":15,"./loadManifest.js":16}],15:[function(require,module,exports){
+},{"../MediaSet.js":2,"../dash/mpd/getDashUtil.js":7,"../dash/mpd/getMpd.js":8,"../events/EventDispatcherMixin.js":11,"../util/existy.js":20,"../util/extendObject.js":21,"../util/findElementInArray.js":22,"../util/getMediaTypeFromMimeType.js":23,"../util/isArray.js":24,"../util/isFunction.js":25,"../util/isString.js":27,"../util/truthy.js":28,"./MediaTypes.js":16,"./loadManifest.js":17}],16:[function(require,module,exports){
 module.exports = ['video', 'audio'];
-},{}],16:[function(require,module,exports){
+},{}],17:[function(require,module,exports){
 'use strict';
 
-var parseRootUrl = require('../dash/mpd/util.js').parseRootUrl;
+var getDashUtil = require('../dash/mpd/getDashUtil.js'),
+    dashUtil = getDashUtil(),
+    parseRootUrl = dashUtil.parseRootUrl;
 
 function loadManifest(url, callback) {
     var actualUrl = parseRootUrl(url),
@@ -1677,7 +1833,7 @@ function loadManifest(url, callback) {
 }
 
 module.exports = loadManifest;
-},{"../dash/mpd/util.js":8}],17:[function(require,module,exports){
+},{"../dash/mpd/getDashUtil.js":7}],18:[function(require,module,exports){
 'use strict';
 
 var isFunction = require('../util/isFunction.js');
@@ -1734,7 +1890,7 @@ function loadSegment(segment, successFn, failFn, thisArg) {
 }
 
 module.exports = loadSegment;
-},{"../util/isFunction.js":24}],18:[function(require,module,exports){
+},{"../util/isFunction.js":25}],19:[function(require,module,exports){
 'use strict';
 
 function compareSegmentListsByBandwidthAscending(segmentListA, segmentListB) {
@@ -1796,13 +1952,13 @@ function selectSegmentList(mediaSet, data) {
 }
 
 module.exports = selectSegmentList;
-},{}],19:[function(require,module,exports){
+},{}],20:[function(require,module,exports){
 'use strict';
 
 function existy(x) { return (x !== null) && (x !== undefined); }
 
 module.exports = existy;
-},{}],20:[function(require,module,exports){
+},{}],21:[function(require,module,exports){
 'use strict';
 
 // Extend a given object with all the properties (and their values) found in the passed-in object(s).
@@ -1825,7 +1981,7 @@ var extendObject = function(obj /*, extendObject1, extendObject2, ..., extendObj
 };
 
 module.exports = extendObject;
-},{}],21:[function(require,module,exports){
+},{}],22:[function(require,module,exports){
 'use strict';
 
 var isArray = require('./isArray.js'),
@@ -1847,7 +2003,7 @@ findElementInArray = function(array, predicateFn) {
 };
 
 module.exports = findElementInArray;
-},{"./isArray.js":23,"./isFunction.js":24}],22:[function(require,module,exports){
+},{"./isArray.js":24,"./isFunction.js":25}],23:[function(require,module,exports){
 'use strict';
 
 var existy = require('./existy.js'),
@@ -1874,7 +2030,7 @@ getMediaTypeFromMimeType = function(mimeType, types) {
 };
 
 module.exports = getMediaTypeFromMimeType;
-},{"./existy.js":19,"./findElementInArray.js":21,"./isString.js":26}],23:[function(require,module,exports){
+},{"./existy.js":20,"./findElementInArray.js":22,"./isString.js":27}],24:[function(require,module,exports){
 'use strict';
 
 var genericObjType = function(){},
@@ -1885,7 +2041,7 @@ function isArray(obj) {
 }
 
 module.exports = isArray;
-},{}],24:[function(require,module,exports){
+},{}],25:[function(require,module,exports){
 'use strict';
 
 var genericObjType = function(){},
@@ -1902,7 +2058,7 @@ if (isFunction(/x/)) {
 }
 
 module.exports = isFunction;
-},{}],25:[function(require,module,exports){
+},{}],26:[function(require,module,exports){
 'use strict';
 
 var genericObjType = function(){},
@@ -1914,7 +2070,7 @@ function isNumber(value) {
 }
 
 module.exports = isNumber;
-},{}],26:[function(require,module,exports){
+},{}],27:[function(require,module,exports){
 'use strict';
 
 var genericObjType = function(){},
@@ -1926,7 +2082,7 @@ var isString = function isString(value) {
 };
 
 module.exports = isString;
-},{}],27:[function(require,module,exports){
+},{}],28:[function(require,module,exports){
 'use strict';
 
 var existy = require('./existy.js');
@@ -1938,150 +2094,4 @@ var existy = require('./existy.js');
 function truthy(x) { return (x !== false) && existy(x); }
 
 module.exports = truthy;
-},{"./existy.js":19}],28:[function(require,module,exports){
-'use strict';
-
-// TODO: Refactor to separate js files & modules & remove from here.
-
-var existy = require('./util/existy.js'),
-    isFunction = require('./util/isFunction.js'),
-    isString = require('./util/isString.js');
-
-// NOTE: This version of truthy allows more values to count
-// as "true" than standard JS Boolean operator comparisons.
-// Specifically, truthy() will return true for the values
-// 0, "", and NaN, whereas JS would treat these as "falsy" values.
-function truthy(x) { return (x !== false) && existy(x); }
-
-function preApplyArgsFn(fun /*, args */) {
-    var preAppliedArgs = Array.prototype.slice.call(arguments, 1);
-    // NOTE: the *this* reference will refer to the closure's context unless
-    // the returned function is itself called via .call() or .apply(). If you
-    // *need* to refer to instance-level properties, do something like the following:
-    //
-    // MyType.prototype.someFn = function(argC) { preApplyArgsFn(someOtherFn, argA, argB, ... argN).call(this); };
-    //
-    // Otherwise, you should be able to just call:
-    //
-    // MyType.prototype.someFn = preApplyArgsFn(someOtherFn, argA, argB, ... argN);
-    //
-    // Where possible, functions and methods should not be reaching out to global scope anyway, so...
-    return function() { return fun.apply(this, preAppliedArgs); };
-}
-
-// Higher-order XML functions
-
-// Takes function(s) as arguments
-var getAncestors = function(elem, shouldStopPred) {
-    var ancestors = [];
-    if (!isFunction(shouldStopPred)) { shouldStopPred = function() { return false; }; }
-    (function getAncestorsRecurse(elem) {
-        if (shouldStopPred(elem, ancestors)) { return; }
-        if (existy(elem) && existy(elem.parentNode)) {
-            ancestors.push(elem.parentNode);
-            getAncestorsRecurse(elem.parentNode);
-        }
-        return;
-    })(elem);
-    return ancestors;
-};
-
-// Returns function
-var getNodeListByName = function(name) {
-    return function(xmlObj) {
-        return xmlObj.getElementsByTagName(name);
-    };
-};
-
-// Returns function
-var hasMatchingAttribute = function(attrName, value) {
-    if ((typeof attrName !== 'string') || attrName === '') { return undefined; }
-    return function(elem) {
-        if (!existy(elem) || !existy(elem.hasAttribute) || !existy(elem.getAttribute)) { return false; }
-        if (!existy(value)) { return elem.hasAttribute(attrName); }
-        return (elem.getAttribute(attrName) === value);
-    };
-};
-
-// Returns function
-var getAttrFn = function(attrName) {
-    if (!isString(attrName)) { return undefined; }
-    return function(elem) {
-        if (!existy(elem) || !isFunction(elem.getAttribute)) { return undefined; }
-        return elem.getAttribute(attrName);
-    };
-};
-
-// Returns function
-// TODO: Add shouldStopPred (should function similarly to shouldStopPred in getInheritableElement, below)
-var getInheritableAttribute = function(attrName) {
-    if ((!isString(attrName)) || attrName === '') { return undefined; }
-    return function recurseCheckAncestorAttr(elem) {
-        if (!existy(elem) || !existy(elem.hasAttribute) || !existy(elem.getAttribute)) { return undefined; }
-        if (elem.hasAttribute(attrName)) { return elem.getAttribute(attrName); }
-        if (!existy(elem.parentNode)) { return undefined; }
-        return recurseCheckAncestorAttr(elem.parentNode);
-    };
-};
-
-// Takes function(s) as arguments; Returns function
-var getInheritableElement = function(nodeName, shouldStopPred) {
-    if ((!isString(nodeName)) || nodeName === '') { return undefined; }
-    if (!isFunction(shouldStopPred)) { shouldStopPred = function() { return false; }; }
-    return function getInheritableElementRecurse(elem) {
-        if (!existy(elem) || !existy(elem.getElementsByTagName)) { return undefined; }
-        if (shouldStopPred(elem)) { return undefined; }
-        var matchingElemList = elem.getElementsByTagName(nodeName);
-        if (existy(matchingElemList) && matchingElemList.length > 0) { return matchingElemList[0]; }
-        if (!existy(elem.parentNode)) { return undefined; }
-        return getInheritableElementRecurse(elem.parentNode);
-    };
-};
-
-var getChildElementByNodeName = function(nodeName) {
-    if ((!isString(nodeName)) || nodeName === '') { return undefined; }
-    return function(elem) {
-        if (!existy(elem) || !isFunction(elem.getElementsByTagName)) { return undefined; }
-        var initialMatches = elem.getElementsByTagName(nodeName),
-            currentElem;
-        if (!existy(initialMatches) || initialMatches.length <= 0) { return undefined; }
-        currentElem = initialMatches[0];
-        return (currentElem.parentNode === elem) ? currentElem : undefined;
-    };
-};
-
-var getMultiLevelElementList = function(nodeName, shouldStopPred) {
-    if ((!isString(nodeName)) || nodeName === '') { return undefined; }
-    if (!isFunction(shouldStopPred)) { shouldStopPred = function() { return false; }; }
-    var getMatchingChildNodeFn = getChildElementByNodeName(nodeName);
-    return function(elem) {
-        var currentElem = elem,
-            multiLevelElemList = [],
-            matchingElem;
-        // TODO: Replace w/recursive fn?
-        while (existy(currentElem) && !shouldStopPred(currentElem)) {
-            matchingElem = getMatchingChildNodeFn(currentElem);
-            if (existy(matchingElem)) { multiLevelElemList.push(matchingElem); }
-            currentElem = currentElem.parentNode;
-        }
-
-        return multiLevelElemList.length > 0 ? multiLevelElemList : undefined;
-    };
-};
-
-// Publish External API:
-var xmlfun = {};
-xmlfun.existy = existy;
-xmlfun.truthy = truthy;
-
-xmlfun.getNodeListByName = getNodeListByName;
-xmlfun.hasMatchingAttribute = hasMatchingAttribute;
-xmlfun.getInheritableAttribute = getInheritableAttribute;
-xmlfun.getAncestors = getAncestors;
-xmlfun.getAttrFn = getAttrFn;
-xmlfun.preApplyArgsFn = preApplyArgsFn;
-xmlfun.getInheritableElement = getInheritableElement;
-xmlfun.getMultiLevelElementList = getMultiLevelElementList;
-
-module.exports = xmlfun;
-},{"./util/existy.js":19,"./util/isFunction.js":24,"./util/isString.js":26}]},{},[13]);
+},{"./existy.js":20}]},{},[14]);

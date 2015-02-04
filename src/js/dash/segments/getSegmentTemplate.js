@@ -101,4 +101,4 @@ segmentTemplate = {
     replaceIDForTemplate: replaceIDForTemplate
 };
 
-module.exports = segmentTemplate;
+module.exports = function getSegmentTemplate() { return segmentTemplate; };

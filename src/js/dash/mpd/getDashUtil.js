@@ -76,10 +76,10 @@ parseDateTime = function(str) {
     return utcDate;
 };
 
-var util = {
+var dashUtil = {
     parseRootUrl: parseRootUrl,
     parseMediaPresentationDuration: parseMediaPresentationDuration,
     parseDateTime: parseDateTime
 };
 
-module.exports = util;
+module.exports = function getDashUtil() { return dashUtil; };

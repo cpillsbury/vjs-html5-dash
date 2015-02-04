@@ -1,10 +1,14 @@
 'use strict';
 
 var existy = require('../../util/existy.js'),
-    xmlfun = require('../../xmlfun.js'),
-    parseMediaPresentationDuration = require('../mpd/util.js').parseMediaPresentationDuration,
-    parseDateTime = require('../mpd/util.js').parseDateTime,
-    segmentTemplate = require('./segmentTemplate'),
+    getXmlFun = require('../../getXmlFun.js'),
+    xmlFun = getXmlFun(),
+    getDashUtil = require('../mpd/getDashUtil.js'),
+    dashUtil = getDashUtil(),
+    parseMediaPresentationDuration = dashUtil.parseMediaPresentationDuration,
+    parseDateTime = dashUtil.parseDateTime,
+    getSegmentTemplate = require('./getSegmentTemplate'),
+    segmentTemplate = getSegmentTemplate(),
     createSegmentListFromTemplate,
     createSegmentFromTemplateByNumber,
     createSegmentFromTemplateByTime,
@@ -103,37 +107,37 @@ getEndNumberFromTemplate = function(representation) {
     return getTotalSegmentCountFromTemplate(representation) + getStartNumberFromTemplate(representation) - 1;
 };
 
-createSegmentListFromTemplate = function(representation) {
+createSegmentListFromTemplate = function(representationXml) {
     return {
-        getType: xmlfun.preApplyArgsFn(getType, representation),
-        getIsLive: xmlfun.preApplyArgsFn(getIsLive, representation),
-        getBandwidth: xmlfun.preApplyArgsFn(getBandwidth, representation),
-        getHeight: xmlfun.preApplyArgsFn(getHeight, representation),
-        getWidth: xmlfun.preApplyArgsFn(getWidth, representation),
-        getTotalDuration: xmlfun.preApplyArgsFn(getTotalDurationFromTemplate, representation),
-        getSegmentDuration: xmlfun.preApplyArgsFn(getSegmentDurationFromTemplate, representation),
-        getUTCWallClockStartTime: xmlfun.preApplyArgsFn(getUTCWallClockStartTimeFromTemplate, representation),
-        getTimeShiftBufferDepth: xmlfun.preApplyArgsFn(getTimeShiftBufferDepth, representation),
-        getTotalSegmentCount: xmlfun.preApplyArgsFn(getTotalSegmentCountFromTemplate, representation),
-        getStartNumber: xmlfun.preApplyArgsFn(getStartNumberFromTemplate, representation),
-        getEndNumber: xmlfun.preApplyArgsFn(getEndNumberFromTemplate, representation),
+        getType: xmlFun.preApplyArgsFn(getType, representationXml),
+        getIsLive: xmlFun.preApplyArgsFn(getIsLive, representationXml),
+        getBandwidth: xmlFun.preApplyArgsFn(getBandwidth, representationXml),
+        getHeight: xmlFun.preApplyArgsFn(getHeight, representationXml),
+        getWidth: xmlFun.preApplyArgsFn(getWidth, representationXml),
+        getTotalDuration: xmlFun.preApplyArgsFn(getTotalDurationFromTemplate, representationXml),
+        getSegmentDuration: xmlFun.preApplyArgsFn(getSegmentDurationFromTemplate, representationXml),
+        getUTCWallClockStartTime: xmlFun.preApplyArgsFn(getUTCWallClockStartTimeFromTemplate, representationXml),
+        getTimeShiftBufferDepth: xmlFun.preApplyArgsFn(getTimeShiftBufferDepth, representationXml),
+        getTotalSegmentCount: xmlFun.preApplyArgsFn(getTotalSegmentCountFromTemplate, representationXml),
+        getStartNumber: xmlFun.preApplyArgsFn(getStartNumberFromTemplate, representationXml),
+        getEndNumber: xmlFun.preApplyArgsFn(getEndNumberFromTemplate, representationXml),
         // TODO: Externalize
         getInitialization: function() {
             var initialization = {};
             initialization.getUrl = function() {
-                var baseUrl = representation.getBaseUrl(),
-                    representationId = representation.getId(),
-                    initializationRelativeUrlTemplate = representation.getSegmentTemplate().getInitialization(),
+                var baseUrl = representationXml.getBaseUrl(),
+                    representationId = representationXml.getId(),
+                    initializationRelativeUrlTemplate = representationXml.getSegmentTemplate().getInitialization(),
                     initializationRelativeUrl = segmentTemplate.replaceIDForTemplate(initializationRelativeUrlTemplate, representationId);
 
-                initializationRelativeUrl = segmentTemplate.replaceTokenForTemplate(initializationRelativeUrl, 'Bandwidth', representation.getBandwidth());
+                initializationRelativeUrl = segmentTemplate.replaceTokenForTemplate(initializationRelativeUrl, 'Bandwidth', representationXml.getBandwidth());
                 return baseUrl + initializationRelativeUrl;
             };
             return initialization;
         },
-        getSegmentByNumber: function(number) { return createSegmentFromTemplateByNumber(representation, number); },
-        getSegmentByTime: function(seconds) { return createSegmentFromTemplateByTime(representation, seconds); },
-        getSegmentByUTCWallClockTime: function(utcMilliseconds) { return createSegmentFromTemplateByUTCWallClockTime(representation, utcMilliseconds); }
+        getSegmentByNumber: function(number) { return createSegmentFromTemplateByNumber(representationXml, number); },
+        getSegmentByTime: function(seconds) { return createSegmentFromTemplateByTime(representationXml, seconds); },
+        getSegmentByUTCWallClockTime: function(utcMilliseconds) { return createSegmentFromTemplateByUTCWallClockTime(representationXml, utcMilliseconds); }
     };
 };
 

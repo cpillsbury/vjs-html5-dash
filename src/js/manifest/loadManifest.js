@@ -1,6 +1,8 @@
 'use strict';
 
-var parseRootUrl = require('../dash/mpd/util.js').parseRootUrl;
+var getDashUtil = require('../dash/mpd/getDashUtil.js'),
+    dashUtil = getDashUtil(),
+    parseRootUrl = dashUtil.parseRootUrl;
 
 function loadManifest(url, callback) {
     var actualUrl = parseRootUrl(url),

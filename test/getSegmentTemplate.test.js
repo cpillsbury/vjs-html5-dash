@@ -1,10 +1,19 @@
-var segmentTemplate = require('../src/js/dash/segments/segmentTemplate.js');
+var getSegmentTemplate = require('../src/js/dash/segments/getSegmentTemplate.js'),
+    segmentTemplate = getSegmentTemplate();
 
 QUnit.module('segmentTemplate');
 
 var templateStrNumber = 'ED_512_640K_MPEG2_video_$Number$.mp4';
 var templateStrNumberBandwidth = 'video-$Number$_$Bandwidth$bps.mp4';
 var templateStrRepresentationIdNumber = '$RepresentationID$/$Number$.m4s';
+
+QUnit.test('getSegmentTemplate exists', function(assert) {
+    assert.ok(getSegmentTemplate, 'getSegmentTemplate does exist!');
+});
+
+QUnit.test('getSegmentTemplate() is an object', function(assert) {
+    assert.strictEqual(typeof getSegmentTemplate, 'function', 'getSegmentTemplate is a function!');
+});
 
 QUnit.test('segmentTemplate exists', function(assert) {
     assert.ok(segmentTemplate, 'segmentTemplate does exist!');
