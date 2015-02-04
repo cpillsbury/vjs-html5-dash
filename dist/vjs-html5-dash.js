@@ -1391,7 +1391,8 @@ module.exports = function getSegmentTemplate() { return segmentTemplate; };
 },{}],11:[function(require,module,exports){
 'use strict';
 
-var eventMgr = require('./eventManager.js'),
+var getEventMgr = require('./getEventManager.js'),
+    eventMgr = getEventMgr(),
     eventDispatcherMixin = {
         trigger: function(eventObject) { eventMgr.trigger(this, eventObject); },
         one: function(type, listenerFn) { eventMgr.one(this, type, listenerFn); },
@@ -1400,7 +1401,7 @@ var eventMgr = require('./eventManager.js'),
     };
 
 module.exports = eventDispatcherMixin;
-},{"./eventManager.js":12}],12:[function(require,module,exports){
+},{"./getEventManager.js":12}],12:[function(require,module,exports){
 'use strict';
 
 var videojs = require('global/window').videojs,
@@ -1411,7 +1412,7 @@ var videojs = require('global/window').videojs,
         off: videojs.off
     };
 
-module.exports = eventManager;
+module.exports = function getEventManager() { return eventManager; };
 
 },{"global/window":1}],13:[function(require,module,exports){
 'use strict';

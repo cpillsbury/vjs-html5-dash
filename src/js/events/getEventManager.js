@@ -8,4 +8,4 @@ var videojs = require('global/window').videojs,
         off: videojs.off
     };
 
-module.exports = eventManager;
+module.exports = function getEventManager() { return eventManager; };

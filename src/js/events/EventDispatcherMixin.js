@@ -1,6 +1,7 @@
 'use strict';
 
-var eventMgr = require('./eventManager.js'),
+var getEventMgr = require('./getEventManager.js'),
+    eventMgr = getEventMgr(),
     eventDispatcherMixin = {
         trigger: function(eventObject) { eventMgr.trigger(this, eventObject); },
         one: function(type, listenerFn) { eventMgr.one(this, type, listenerFn); },
