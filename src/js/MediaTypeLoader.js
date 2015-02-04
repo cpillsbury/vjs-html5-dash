@@ -298,7 +298,13 @@ MediaTypeLoader.prototype.__loadAndBufferSegment = function loadAndBufferSegment
     }
 
     function fail(data) {
-        if (--retryCount <= 0) { return; }
+        if (--retryCount <= 0) {
+            // NOTE: Add this if we want to keep retrying (CJP).
+            //self.trigger({ type:self.eventList.RECHECK_SEGMENT_LOADING, target:self });
+            // NOTE: Add this if we want to give up (CJP).
+            //self.stopLoadingSegments();
+            return;
+        }
         console.log('Failed to load segment @ ' + segment.getUrl() + '. Request Status: ' + data.status);
         setTimeout(function() {
             requestStartTimeSeconds = (new Date().getTime())/1000;
